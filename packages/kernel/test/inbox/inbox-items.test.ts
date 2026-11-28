@@ -183,6 +183,51 @@ describe("ctx.inbox.post", () => {
     expect(await listOf(owner)).toEqual([]);
   });
 
+  it("keeps a { zh, en } title and body as given; the single strings read its English", async () => {
+    const title = { zh: "CAP-12 已分配给你", en: "CAP-12 was assigned to you" };
+    const body = { zh: "导出 PDF 报表", en: "Export reports as PDF" };
+    const { itemId } = await inbox().post(item({ title, body }));
+    const [listed] = await listOf(member);
+    expect(listed?.item).toMatchObject({ id: itemId, title, body });
+    expect(
+      await db
+        .selectFrom("inbox_items")
+        .select(["title", "body", "title_localized", "body_localized"])
+        .where("id", "=", itemId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      title: title.en,
+      body: body.en,
+      title_localized: title,
+      body_localized: body,
+    });
+    // the push shows the title in each registration's locale
+    expect(await resolveRecipients(db, { kind: "inbox", itemId })).toMatchObject({
+      conversationTitle: title,
+    });
+    // a string title with a bilingual body, and the reverse, each keep their own form
+    const { itemId: mixed } = await inbox().post(
+      item({ title: "Plain", body, dedupeKey: "mixed" }),
+    );
+    const rows = await listOf(member);
+    expect(rows.find((r) => r.id === mixed)?.item).toMatchObject({ title: "Plain", body });
+  });
+
+  it("refuses a title or body that is neither a string nor { zh, en }", async () => {
+    for (const over of [
+      { title: { zh: "仅中文" } },
+      { title: { zh: " ", en: "Blank zh" } },
+      { title: { zh: "长", en: "x".repeat(201) } },
+      { body: { zh: "a", en: "b", fr: "c" } },
+      { body: 42 },
+    ] as unknown as Partial<InboxPost>[]) {
+      await expect(inbox().post(item(over)), JSON.stringify(over)).rejects.toMatchObject({
+        name: "InboxError",
+        code: "invalid_item",
+      });
+    }
+  });
+
   it("refuses four actions, a link outside its own pages and a non-member", async () => {
     const four = ["a", "b", "c", "d"].map((id) => ({
       id,

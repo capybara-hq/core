@@ -181,6 +181,10 @@ Assignment is a **directed event**: `audience` names the person and the agent th
   *decided*; org setting `automations.directedDefault` may change the default) and, for `auto`,
   creates the acceptance automation: mode `subject`, no grants, `unattendedAsk: wait`, owner = the
   person. The person sees it in their automations and may edit grants, switch it to `confirm` or off.
+  Its prompt states only the mechanism (events the source directed to the person and agent,
+  delivered by their acceptance rule; decide from each event's type, subject and summary what, if
+  anything, is expected), since a directed event need not be an assignment (`item.unassigned`, an
+  answered decision): what happened is the event block's (§4.6), never the prompt's.
 - `confirm`: the kernel posts an inbox item "work offered" (new kernel kind `automation_offer`,
   with push) with accept / decline; accept starts the run. Decline (*decided*) posts an inbox
   notice to the person who caused the event (`cause.accountId`, or the owner of the causing run)
@@ -287,7 +291,8 @@ Today's org notices are admin-only and dismissed org-wide, so personal items get
 expiry). The kernel writes it too (a declined offer, §4.4; a depth stop, §4.7).
 
 `ctx.inbox.post / resolve` (permission `permissions.inbox`): an item for one person with a title,
-a short body, a link (the plugin's page) and up to three actions; an action names one of the
+a short body (each a single string or `{ zh, en }`, stored as given and shown in the reader's
+language, like the action labels), a link (the plugin's page) and up to three actions; an action names one of the
 plugin's UI actions (`ctx.ui.action`), which the kernel calls with the person who clicked. The
 inbox lists them under the plugin's name; push follows the person's push settings. Items have an
 expiry. Channel cards for them are a later phase.

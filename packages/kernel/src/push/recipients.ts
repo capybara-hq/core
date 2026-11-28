@@ -57,7 +57,7 @@ async function resolveInboxItem(
   // org, which every later read filters by
   const item = await db
     .selectFrom("inbox_items")
-    .select(["org_id", "account_id", "plugin", "title", "state", "expires_at"])
+    .select(["org_id", "account_id", "plugin", "title", "title_localized", "state", "expires_at"])
     .where("id", "=", itemId)
     .executeTakeFirst();
   if (!item || item.state !== "open" || item.expires_at.getTime() <= Date.now()) return null;
@@ -77,7 +77,7 @@ async function resolveInboxItem(
     path: `/inbox?org=${encodeURIComponent(orgId)}#item=${encodeURIComponent(itemId)}`,
     threadId: "inbox",
     title,
-    conversationTitle: item.title,
+    conversationTitle: item.title_localized ?? item.title,
     text: "inboxItem",
   };
 }

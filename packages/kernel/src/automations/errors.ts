@@ -49,5 +49,5 @@ export const filterInvalid = (message: string) =>
 export const acceptanceFixed = () =>
   new ApiError(
     "automation.acceptance_fixed",
-    "This automation accepts work assigned to you and your agent, so its trigger, agent and target are fixed; change its name, prompt, approved tools or unattended setting, pause it, or change your acceptance rule for the source",
+    "This automation accepts the events a source directs to you and your agent, so its trigger, agent and target are fixed; change its name, prompt, approved tools or unattended setting, pause it, or change your acceptance rule for the source",
   );

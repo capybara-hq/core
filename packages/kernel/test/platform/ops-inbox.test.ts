@@ -401,6 +401,29 @@ describe("personal inbox items", () => {
     const after = (await run("inbox.list", {}, memberId)) as Rows;
     expect(after.items.map((r) => r.id)).not.toContain(itemId);
   });
+
+  it("a { zh, en } item lists its English text and confirms in each language", async () => {
+    const { itemId } = await withOrgScope(orgId, () =>
+      env.k.app.get(InboxItemsService).post(
+        { kind: "kernel" },
+        {
+          orgId,
+          accountId: memberId,
+          kind: "notice",
+          title: { zh: "请阅读", en: "Read me" },
+          body: { zh: "简短正文", en: "Short body" },
+          dedupeKey: "localized",
+        },
+      ),
+    );
+    const listed = (await run("inbox.list", {}, memberId)) as Rows;
+    expect(listed.items).toContainEqual(
+      expect.objectContaining({ id: itemId, type: "item", summary: "Read me: Short body" }),
+    );
+    const summary = await op("inbox.item-dismiss").summary?.({ id: itemId }, ctxOf(memberId));
+    expect(summary?.en).toContain("Read me");
+    expect(summary?.zh).toContain("请阅读");
+  });
 });
 
 describe("work offers in inbox.list", () => {

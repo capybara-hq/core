@@ -85,6 +85,16 @@ describe("renderPushMessage", () => {
     ).toBe("finished");
   });
 
+  it("previews titles: a { zh, en } title leads in the registration's locale", () => {
+    const r = resolved({ conversationTitle: { zh: "部署检查", en: "Deploy check" } });
+    expect(renderPushMessage(r, "en", "titles", "https://cap.example").body).toBe(
+      "Deploy check: finished",
+    );
+    expect(renderPushMessage(r, "zh", "titles", "https://cap.example").body).toBe(
+      "部署检查：已完成",
+    );
+  });
+
   it("cuts the title and the body to the limits", () => {
     const m = renderPushMessage(
       resolved({ title: "n".repeat(300), conversationTitle: "t".repeat(500) }),

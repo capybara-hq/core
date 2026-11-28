@@ -2527,13 +2527,13 @@ export type InboxErrorCode = "invalid_item" | "org_disabled" | "not_found";
 export interface InboxPost {
     accountId: string;
     actions?: InboxAction[];
-    body?: string;
+    body?: LocalizedText;
     dedupeKey?: string;
     expiresInSeconds?: number;
     kind: string;
     link?: string;
     orgId: string;
-    title: string;
+    title: LocalizedText;
 }
 
 // @public

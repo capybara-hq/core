@@ -42,8 +42,11 @@ export interface ResolvedPush {
    * `Capybara` for an inbox item; a localized name is shown in the registration's locale).
    */
   title: string | { zh: string; en: string };
-  /** Shown only with `push.previews: "titles"` (an inbox item's title). */
-  conversationTitle: string | null;
+  /**
+   * Shown only with `push.previews: "titles"` (an inbox item's title; a localized one is shown in
+   * the registration's locale).
+   */
+  conversationTitle: string | { zh: string; en: string } | null;
   text: PushTextKey;
 }
 
@@ -68,7 +71,11 @@ export function renderPushMessage(
   origin: string,
 ): PushMessage {
   const sentence = pushText(r.text, locale);
-  const lead = previews === "titles" && r.conversationTitle ? r.conversationTitle : null;
+  const conversationTitle =
+    r.conversationTitle === null || typeof r.conversationTitle === "string"
+      ? r.conversationTitle
+      : r.conversationTitle[locale];
+  const lead = previews === "titles" && conversationTitle ? conversationTitle : null;
   const body = lead === null ? sentence : `${lead}${locale === "zh" ? "：" : ": "}${sentence}`;
   return {
     title: cut(typeof r.title === "string" ? r.title : r.title[locale], PUSH_LIMITS.titleChars),
