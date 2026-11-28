@@ -49,6 +49,26 @@ describe("validateInboxPost", () => {
     expect(check({ body: "x".repeat(INBOX_LIMITS.bodyChars + 1) })).toEqual(["body_too_long"]);
   });
 
+  it("takes a title and a body as a string or { zh, en }, each language within the limits", () => {
+    expect(
+      check({ title: { zh: "已分配", en: "Assigned" }, body: { zh: "正文", en: "Body" } }),
+    ).toEqual([]);
+    expect(check({ body: { zh: "", en: "" } })).toEqual([]);
+    const bad = (over: unknown) => check(over as Partial<InboxPost>);
+    expect(bad({ title: { zh: "仅中文" } })).toEqual(["title_invalid"]);
+    expect(bad({ title: { zh: " ", en: "x" } })).toEqual(["title_invalid"]);
+    expect(bad({ title: { zh: "x", en: "y", fr: "z" } })).toEqual(["title_invalid"]);
+    expect(bad({ title: ["x"] })).toEqual(["missing_title"]);
+    expect(bad({ title: { zh: "x", en: "y".repeat(INBOX_LIMITS.titleChars + 1) } })).toEqual([
+      "title_too_long",
+    ]);
+    expect(bad({ body: { zh: "x".repeat(INBOX_LIMITS.bodyChars + 1), en: "y" } })).toEqual([
+      "body_too_long",
+    ]);
+    expect(bad({ body: { en: "y" } })).toEqual(["body_invalid"]);
+    expect(bad({ body: 3 })).toEqual(["body_invalid"]);
+  });
+
   it("links only to /p/<the plugin>/…", () => {
     for (const link of [
       "/p/other/items",

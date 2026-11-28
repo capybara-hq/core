@@ -9,7 +9,7 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { AcceptanceService } from "../../src/automations/events/acceptance.js";
+import { ACCEPTANCE_PROMPT, AcceptanceService } from "../../src/automations/events/acceptance.js";
 import { EventCoalescer } from "../../src/automations/events/coalesce.js";
 import { TriggerDispatcher } from "../../src/automations/events/dispatcher.js";
 import { subjectKey } from "../../src/automations/events/guards.js";
@@ -283,6 +283,9 @@ describe("directed events: auto", () => {
       expires_at: null,
     });
     expect(a?.name).toMatch(/ · Watcher$/);
+    // the prompt states the mechanism for any directed event; what happened is the event block's
+    expect(a?.prompt).toBe(ACCEPTANCE_PROMPT);
+    expect(ACCEPTANCE_PROMPT).not.toMatch(/assign/i);
     expect(
       await db
         .selectFrom("automation_grants")

@@ -74,6 +74,7 @@ import {
   hasNotice,
   type InboxItem,
   isShowable,
+  localizedText,
   type OrgNotice,
   type PersonalInboxItem,
 } from "../../../lib/inbox";
@@ -531,7 +532,7 @@ function Inbox({
           description={
             <Text>
               {ti("confirmHint", {
-                title: dangerAction.item.title,
+                title: localizedText(dangerAction.item.title, locale),
                 action: dangerAction.action.label[locale === "zh" ? "zh" : "en"],
               })}
             </Text>
@@ -676,7 +677,7 @@ function rowOf(
   if (item.type === "item") {
     const texts = labels.item(item.item);
     return {
-      title: item.item.title,
+      title: localizedText(item.item.title, locale),
       trailing: null,
       description: joined(texts.source, texts.label ?? ""),
     };
@@ -874,16 +875,17 @@ function personalItemDetail({
           ...(second !== undefined ? { secondary: button(second) } : {}),
           primary: { ...button(first), loading: pending },
         };
-  const body = texts.hint ?? item.body;
+  const body = texts.hint ?? localizedText(item.body, locale);
+  const title = localizedText(item.title, locale);
   return {
-    title: item.title,
+    title,
     ...(texts.label !== null
       ? { status: <StatusMark status="waiting" label={texts.label} /> }
       : {}),
     facts: [
       { label: ti("source"), value: texts.source },
       ...(link !== null && first !== undefined
-        ? [{ label: ti("open"), value: <TextLink href={link}>{item.title}</TextLink> }]
+        ? [{ label: ti("open"), value: <TextLink href={link}>{title}</TextLink> }]
         : []),
       { label: ti("expires"), value: <DateTime value={item.expiresAt} /> },
     ],

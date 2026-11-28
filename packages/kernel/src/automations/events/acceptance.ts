@@ -38,9 +38,14 @@ export type { AcceptanceMode } from "../../db/kernel-schema.js";
 /** How long a work offer stays open (collaboration spec §4.4). */
 export const OFFER_TTL_SECONDS = 7 * 24 * 3600;
 
-/** The prompt of an acceptance automation (model-visible; the event block carries the work). */
+/**
+ * The prompt of an acceptance automation (model-visible, stored on the automation and recorded as
+ * each fire's message text). It states only the mechanism: a directed event is any event its
+ * source addressed to this person and agent (an assignment, an unassignment, an answer, ...), so
+ * what happened is the event block's type, subject and summary, never this text.
+ */
 export const ACCEPTANCE_PROMPT =
-  "This work was assigned to you. Read the assigned item, do what it asks within what you are allowed to do, and report what you did.";
+  "The events above were directed to you and your agent by their source; your acceptance rule for that source delivers them to this automation. Each one names its type, its subject and the source's own summary of what happened. Decide from them what, if anything, is now expected of you: do it within what you are allowed to do and report what you did, or say why nothing needs doing.";
 
 /** A person's acceptance rule for one trigger source with directed event types. */
 export interface AcceptanceRuleView {

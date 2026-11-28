@@ -1,6 +1,14 @@
 /** A plugin's display name in both UI languages (plugin.json `displayName`). */
 type LocalizedName = { zh: string; en: string };
 
+/** A text a plugin posted: a single string shown as is, or one per UI language. */
+export type LocalizedText = string | LocalizedName;
+
+/** `t` in the UI language `locale`: a single string as is, else its `zh` or `en` text. */
+export function localizedText(t: LocalizedText, locale: string): string {
+  return typeof t === "string" ? t : t[locale === "zh" ? "zh" : "en"];
+}
+
 import { apiFetch } from "./api";
 import type { Approval } from "./approvals";
 import type { AutomationPauseReason } from "./automations";
@@ -38,8 +46,10 @@ export interface PersonalInboxItem {
   pluginName: LocalizedName | null;
   /** The platform's own kinds (`automation_depth_stopped`) read with their own copy. */
   kind: string;
-  title: string;
-  body: string;
+  /** As posted: a single string, or one per UI language (read with {@link localizedText}). */
+  title: LocalizedText;
+  /** Like `title`; `""` when there is none. */
+  body: LocalizedText;
   /** An in-app path (a plugin's item opens one of its pages). */
   link: string | null;
   actions: { id: string; label: LocalizedName; style?: "primary" | "danger" }[];

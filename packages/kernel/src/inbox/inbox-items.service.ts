@@ -4,6 +4,7 @@ import {
   InboxError,
   type InboxPost,
   type LocalizedName,
+  type LocalizedText,
   validateInboxPost,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module } from "@nestjs/common";
@@ -36,8 +37,10 @@ export interface PersonalInboxItemView {
   /** The plugin's display name (its name in both languages when it has none); null for the kernel. */
   pluginName: LocalizedName | null;
   kind: string;
-  title: string;
-  body: string;
+  /** As posted: a single string, or `{ zh, en }` the reader sees in their language. */
+  title: LocalizedText;
+  /** As posted, like `title` (`""`: none). */
+  body: LocalizedText;
   /** An in-app path; a plugin item's is one of the plugin's pages (`/p/<plugin>/…`). */
   link: string | null;
   actions: { id: string; label: LocalizedName; style?: "primary" | "danger" }[];
@@ -69,6 +72,13 @@ const kernelLinkOk = (link: string): boolean =>
   !link.startsWith("//") &&
   link.length <= INBOX_LIMITS.linkChars &&
   !/[\\\p{Cc}]/u.test(link);
+
+/** A posted text as one string: itself, or the English one of `{ zh, en }`. */
+const single = (t: LocalizedText): string => (typeof t === "string" ? t : t.en);
+
+/** A posted `{ zh, en }` text as its stored JSON (only the two languages); null for a string. */
+const localized = (t: LocalizedText): string | null =>
+  typeof t === "string" ? null : JSON.stringify({ zh: t.zh, en: t.en });
 
 const notFound = (): ApiError => new ApiError("inbox.item_not_found", "Inbox item not found");
 
@@ -168,8 +178,10 @@ export class InboxItemsService {
           source: source.kind,
           plugin,
           kind: p.kind,
-          title: p.title,
-          body: p.body ?? "",
+          title: single(p.title),
+          body: p.body === undefined ? "" : single(p.body),
+          title_localized: localized(p.title),
+          body_localized: p.body === undefined ? null : localized(p.body),
           link: p.link ?? null,
           actions: JSON.stringify(actions),
           dedupe_key: dedupe,
@@ -300,6 +312,8 @@ export class InboxItemsService {
         "kind",
         "title",
         "body",
+        "title_localized",
+        "body_localized",
         "link",
         "actions",
         "detail",
@@ -324,8 +338,8 @@ export class InboxItemsService {
       plugin: r.plugin,
       pluginName: r.plugin === null ? null : (names.get(r.plugin) ?? null),
       kind: r.kind,
-      title: r.title,
-      body: r.body,
+      title: r.title_localized ?? r.title,
+      body: r.body_localized ?? r.body,
       link: r.link,
       actions: r.actions.map((a) => ({
         id: a.id,

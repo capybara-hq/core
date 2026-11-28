@@ -1,3 +1,4 @@
+import type { LocalizedText } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { CatalogRequestView } from "../../catalog/requests.service.js";
@@ -41,6 +42,10 @@ const NOT_FOUND: PrecheckResult = {
 const DECIDE_REQUEST_ON_WEB = "Decide it on the web, in the inbox.";
 const DISMISS_ORG = "Dismiss it with inbox.dismiss-notice once read.";
 const ADMIN_CONSOLE_PENDING = "Review it in the admin console (plugins, pending tab).";
+
+/** A personal item's text in `lang`: a single string as is, else that language of `{ zh, en }`. */
+const textIn = (t: LocalizedText, lang: "zh" | "en"): string =>
+  typeof t === "string" ? t : t[lang];
 
 /** What a request asks for, by name (the plugin, the marketplace entry or the agent). */
 const requestName = (r: CatalogRequestView): string =>
@@ -152,7 +157,7 @@ function orgRow(i: InboxItem) {
         ...base,
         name: it.pluginName?.en ?? "Capybara",
         state: "open",
-        summary: `${it.title}${it.body !== "" ? `: ${it.body}` : ""}`,
+        summary: `${textIn(it.title, "en")}${textIn(it.body, "en") !== "" ? `: ${textIn(it.body, "en")}` : ""}`,
         next:
           it.actions.length > 0
             ? "Its buttons are pressed by you on the web, in the inbox; dismiss it with inbox.item-dismiss once read."
@@ -406,10 +411,11 @@ export class InboxOperations implements OnModuleInit {
         summary: async (input, ctx) => {
           const open = await orElse(() => this.items.listOpen(ctx.orgId, ctx.actorAccountId), []);
           const it = open.find((x) => x.id === input.id);
-          const name = named(it === undefined ? input.id : it.title);
+          const name = (lang: "zh" | "en") =>
+            named(it === undefined ? input.id : textIn(it.title, lang));
           return {
-            zh: `从你的收件箱移除「${name}」`,
-            en: `Dismiss "${name}" from your inbox`,
+            zh: `从你的收件箱移除「${name("zh")}」`,
+            en: `Dismiss "${name("en")}" from your inbox`,
           };
         },
         run: async (input, ctx) => {

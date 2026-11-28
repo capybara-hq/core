@@ -2043,8 +2043,21 @@ export interface InboxItemsTable {
   /** The posting extension; null for a kernel item. */
   plugin: NullableText;
   kind: string;
+  /** The title as a single string; the English one when the post gave `{ zh, en }`. */
   title: string;
   body: ColumnType<string, string | undefined, string>;
+  /** The post's `{ zh, en }` title as given; null when it gave a single string. */
+  title_localized: ColumnType<
+    { zh: string; en: string } | null,
+    string | null | undefined,
+    string | null
+  >;
+  /** The post's `{ zh, en }` body as given; null when it gave a single string or none. */
+  body_localized: ColumnType<
+    { zh: string; en: string } | null,
+    string | null | undefined,
+    string | null
+  >;
   link: NullableText;
   actions: ColumnType<StoredInboxAction[], string | undefined, string>;
   dedupe_key: NullableText;

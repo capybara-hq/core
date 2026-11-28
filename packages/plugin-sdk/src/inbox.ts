@@ -1,4 +1,5 @@
 import type { LocalizedName } from "./plugin-package.js";
+import type { LocalizedText } from "./tool.js";
 import { UI_LIMITS } from "./ui.js";
 
 /**
@@ -23,10 +24,16 @@ export interface InboxPost {
   accountId: string;
   /** What kind of item it is, for the extension ({@link INBOX_KIND_RE}). */
   kind: string;
-  /** At most {@link INBOX_LIMITS}.titleChars characters. */
-  title: string;
-  /** At most {@link INBOX_LIMITS}.bodyChars characters. */
-  body?: string;
+  /**
+   * A single string shown as is, or `{ zh, en }` shown in the reader's language; each text at
+   * most {@link INBOX_LIMITS}.titleChars characters.
+   */
+  title: LocalizedText;
+  /**
+   * A single string or `{ zh, en }`, like `title`; each text at most
+   * {@link INBOX_LIMITS}.bodyChars characters.
+   */
+  body?: LocalizedText;
   /**
    * An in-app path opened from the item: an extension's item may only link to its own pages,
    * `/p/<extension name>/...` (at most {@link INBOX_LIMITS}.linkChars characters).
@@ -93,7 +100,8 @@ export const INBOX_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 /**
  * Checks a post before it is stored; returns error codes (empty = valid): `missing_<field>`,
- * `<field>_too_long`, `kind_invalid`, `link_invalid` (not a path of the extension's own pages
+ * `<field>_too_long`, `title_invalid` / `body_invalid` (not a string or `{ zh, en }`),
+ * `kind_invalid`, `link_invalid` (not a path of the extension's own pages
  * `/p/<plugin>/`), `too_many_actions`, `action_invalid`, `action_duplicate`, `payload_too_large`,
  * `expiry_invalid`. `plugin` is the posting extension's name.
  */
@@ -106,11 +114,11 @@ export function validateInboxPost(p: InboxPost, plugin: string): string[] {
   if (blank(p.kind)) errs.push("missing_kind");
   else if (p.kind.length > INBOX_LIMITS.kindChars || !INBOX_KIND_RE.test(p.kind))
     errs.push("kind_invalid");
-  if (blank(p.title)) errs.push("missing_title");
-  else if (p.title.length > INBOX_LIMITS.titleChars) errs.push("title_too_long");
+  const title = textProblem(p.title, INBOX_LIMITS.titleChars, true);
+  if (title !== null) errs.push(`${title === "missing" ? "missing_title" : `title_${title}`}`);
   if (p.body !== undefined) {
-    if (!str(p.body)) errs.push("body_invalid");
-    else if (p.body.length > INBOX_LIMITS.bodyChars) errs.push("body_too_long");
+    const body = textProblem(p.body, INBOX_LIMITS.bodyChars, false);
+    if (body !== null) errs.push(body === "missing" ? "body_invalid" : `body_${body}`);
   }
   if (p.link !== undefined) {
     if (!str(p.link) || p.link.length > INBOX_LIMITS.linkChars || !ownPageLink(p.link, plugin))
@@ -142,6 +150,29 @@ export function validateInboxPost(p: InboxPost, plugin: string): string[] {
     }
   }
   return [...new Set(errs)];
+}
+
+/**
+ * What is wrong with a title or body (a string, or `{ zh, en }` with both strings): `missing` (a
+ * required text that is not a string or object, or blank), `invalid` (an object with another
+ * shape, or a blank language of a required text), `too_long`; null when it is fine.
+ */
+function textProblem(
+  v: unknown,
+  max: number,
+  required: boolean,
+): "missing" | "invalid" | "too_long" | null {
+  const blank = (t: string) => required && t.trim() === "";
+  if (typeof v === "string") {
+    if (blank(v)) return "missing";
+    return v.length > max ? "too_long" : null;
+  }
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return "missing";
+  const keys = Object.keys(v);
+  const { zh, en } = v as { zh?: unknown; en?: unknown };
+  if (keys.length !== 2 || typeof zh !== "string" || typeof en !== "string") return "invalid";
+  if (blank(zh) || blank(en)) return "invalid";
+  return zh.length > max || en.length > max ? "too_long" : null;
 }
 
 const idOk = (v: unknown): boolean =>

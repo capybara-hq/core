@@ -1590,6 +1590,41 @@ describe("personal inbox items", () => {
     },
   );
 
+  it.each(LOCALES)(
+    "a { zh, en } title and body read in the UI language; a single string as is (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      await renderInbox(
+        {
+          [LIST]: () =>
+            json(
+              200,
+              listed([
+                pluginItem({
+                  title: { zh: "CAP-12 已分配给你", en: "CAP-12 was assigned to you" },
+                  body: { zh: "导出 PDF 报表", en: "Export reports as PDF" },
+                }),
+                pluginItem({ id: "i2", title: "CAP-13 plain", body: "", createdAt: T }),
+              ]),
+            ),
+        },
+        { locale },
+      );
+      const table = await screen.findByRole("list", { name: m.inbox.listLabel });
+      const title = locale === "zh" ? "CAP-12 已分配给你" : "CAP-12 was assigned to you";
+      const other = locale === "zh" ? "CAP-12 was assigned to you" : "CAP-12 已分配给你";
+      expect(within(table).getByText(title, { selector: '[data-part="list-title"]' })).toBeTruthy();
+      expect(within(table).getByText("CAP-13 plain")).toBeTruthy();
+      expect(within(table).queryByText(other)).toBeNull();
+      expect(
+        await screen.findByText(locale === "zh" ? "导出 PDF 报表" : "Export reports as PDF"),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText(locale === "zh" ? "Export reports as PDF" : "导出 PDF 报表"),
+      ).toBeNull();
+    },
+  );
+
   it("dismiss closes it without pressing a button", async () => {
     let open = true;
     const { calls } = await renderInbox({
