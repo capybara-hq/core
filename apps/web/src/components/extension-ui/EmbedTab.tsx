@@ -4,6 +4,7 @@ import {
   Button,
   EmbedFrame,
   Skeleton,
+  SkeletonBars,
   Stack,
   Text,
   useRightFull,
@@ -285,7 +286,9 @@ export function EmbedTab({
     bridge.current?.receive({ source: e.source, data: e.data });
   }, []);
 
-  if (state.kind === "loading") return <Skeleton rows={4} />;
+  // A filling embed sits in a pane without padding (the right panel's flush body, a file preview
+  // body): it loads with the panel's own loading shape at the padded body's inset.
+  if (state.kind === "loading") return fill ? <SkeletonBars inset /> : <Skeleton rows={4} />;
   if (state.kind === "error" || state.kind === "remountLimit") {
     const message = state.kind === "error" ? errorMessage(state.e) : t("ui.embedRemountLimit");
     if (failed) return failed({ message, onRetry: () => setAttempt((n) => n + 1) });

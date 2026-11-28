@@ -35,13 +35,24 @@ export type BlockState = "ready" | "loading" | "failed";
 /**
  * Skeleton bars (`selected`, radius `sm`, `aria-busy`): loading never spins in a block. Inside a
  * skeleton group (a loading page) the group announces, so the bars are only decorative.
+ * `inset`: the bars take a padded body's inset (`space.4`) themselves, for a loading shape drawn
+ * in a pane without padding (a flush right panel body, a file preview body), so they never touch
+ * the pane's edges.
  */
-export function SkeletonBars({ widths = [56, 72, 48, 64] }: { widths?: number[] }): JSX.Element {
+export function SkeletonBars({
+  widths = [56, 72, 48, 64],
+  inset = false,
+}: {
+  widths?: number[];
+  inset?: boolean;
+}): JSX.Element {
   const t = useDesignT();
   const announces = useSkeletonAnnounces();
   return (
     <div
       className="cb-skeleton-list"
+      data-part="skeleton-list"
+      data-inset={inset ? "pane" : undefined}
       {...(announces
         ? { role: "status", "aria-busy": "true", "aria-label": t("card.loading") }
         : { "aria-hidden": "true" })}

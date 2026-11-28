@@ -374,7 +374,7 @@ export function ExtensionPanel({
         // bridge's resize does not apply), borderless: the panel is its one box
         fill
         failed={({ message, onRetry }) => (
-          <LoadFailed name={title} reason={message} onRetry={onRetry} />
+          <LoadFailed name={title} reason={message} onRetry={onRetry} inset />
         )}
       />
     </RightPanel>
