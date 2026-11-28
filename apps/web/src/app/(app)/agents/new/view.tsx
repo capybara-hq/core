@@ -10,7 +10,7 @@ import {
 import { type AgentFormData, useAgentFormData } from "../../../../components/agent/form-data";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useSetup } from "../../../../components/shell/setup";
 import { useRouter } from "../../../../i18n/navigation";
 import { useWorkspace } from "../../../../lib/query/workspace";
@@ -33,6 +33,7 @@ export default function NewAgentView() {
 
 function NewAgent({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations();
   const router = useRouter();
   const setup = useSetup();
@@ -49,7 +50,7 @@ function NewAgent({ orgId }: { orgId: string }) {
     }
   };
   const header = {
-    path: [...scope, { label: "agents", href: "/agents" }, { label: "new" }],
+    path: [...scope, pw("agents", "/agents"), pw("new")],
     title: t("agents.form.title"),
   };
   if (state.kind === "error") return <ErrorFrame reset={state.retry} />;

@@ -7,7 +7,7 @@ import { useState } from "react";
 import { ChannelCard } from "../../../components/ChannelCard";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { agentsQuery } from "../../../lib/query/agents";
 import { channelsQuery } from "../../../lib/query/channels";
 import { retryOnMountOf } from "../../../lib/query/client";
@@ -33,6 +33,7 @@ export default function ChannelsView() {
 
 function Channels({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("channels");
   const [tab, setTab] = useState<"all" | "error">("all");
   const list = usePageQuery(channelsQuery(orgId));
@@ -49,7 +50,7 @@ function Channels({ orgId }: { orgId: string }) {
   const active = tab === "error" && failing.length > 0 ? "error" : "all";
   const rows = active === "error" ? failing : all;
   const header = {
-    path: [...scope, { label: "channels" }],
+    path: [...scope, pw("channels")],
     title: t("title"),
     actions: [{ label: t("new"), variant: "primary" as const, href: "/channels/new" }],
     ...(failing.length > 0

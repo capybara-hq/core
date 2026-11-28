@@ -18,7 +18,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { adminItemTabs } from "../../../../components/admin-item-tabs";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
   type AdminConnectorFilter,
@@ -117,6 +117,7 @@ const connectorColumns = (t: T): Column<AdminConnectorRow>[] => [
 
 function AdminConnectors({ filter }: { filter: Filter }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminItems.connectors");
   const ti = useTranslations("adminItems.tabs");
   const router = useRouter();
@@ -151,7 +152,7 @@ function AdminConnectors({ filter }: { filter: Filter }) {
   }
   const filtered = filter.orgId !== "" || filter.status !== "" || filter.q !== "";
   const header = {
-    path: [...scope, { label: "connectors" }],
+    path: [...scope, pw("connectors")],
     title: t("title"),
     description: t("description"),
     ...adminItemTabs("connectors", "items", {

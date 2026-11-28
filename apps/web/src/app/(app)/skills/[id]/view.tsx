@@ -23,7 +23,7 @@ import { useOwnerLabel } from "../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
 import { canUpdateOrg } from "../../../../lib/org-settings";
@@ -91,6 +91,7 @@ function Skill({
   initial: SkillPageAddress;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("skills");
   const { me } = useSession();
   const [tab, setTab] = useUrlTab<Tab>(initial.tab, parseSkillTab, "content");
@@ -127,7 +128,7 @@ function Skill({
   if (read.kind === "loading") {
     return (
       <DetailPage
-        header={{ path: [...scope, { label: "skills", href: "/skills" }], title: "" }}
+        header={{ path: [...scope, pw("skills", "/skills")], title: "" }}
         tabs={tabs}
         // One column: the facts (a KeyValue), then the content tab's SKILL.md body
         loading={{
@@ -163,6 +164,7 @@ function SkillDetailView({
   me: Me;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("skills");
   const tcm = useTranslations("common");
   const td = useTranslations("plugins.delete");
@@ -182,7 +184,7 @@ function SkillDetailView({
     <>
       <DetailPage
         header={{
-          path: [...scope, { label: "skills", href: "/skills" }, { label: skill.name }],
+          path: [...scope, pw("skills", "/skills"), { label: skill.name }],
           title: skill.name,
           count: t("version", { version: skill.currentVersion }),
           ...(deletable

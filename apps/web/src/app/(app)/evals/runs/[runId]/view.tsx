@@ -27,7 +27,7 @@ import { type ReactNode, useCallback, useState } from "react";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { grouped, useFormatCost } from "../../../../../components/TrajectoryParts";
 import { Link } from "../../../../../i18n/navigation";
 import type { ApiClientError } from "../../../../../lib/api";
@@ -183,6 +183,7 @@ const pollInterval = (q: Query<EvalRunState, ApiClientError>) => evalRunPollMs(q
 
 function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("evals");
   const qc = useQueryClient();
   // A read on top of the cached rows is a poll (see `evalRunQuery`).
@@ -235,7 +236,7 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
   if (read.kind === "loading") {
     return (
       <DetailPage
-        header={{ path: [...scope, { label: "evals", href: "/evals" }], title: "" }}
+        header={{ path: [...scope, pw("evals", "/evals")], title: "" }}
         tabs={tabs}
         // The five header metrics, then the results tab: its table (no facts block: what the page
         // knows about the run is in the head)
@@ -292,6 +293,7 @@ function EvalRunView({
 }) {
   const timeZone = useTimeZone();
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("evals");
   const te = useTranslations("errors");
   const toast = useToast();
@@ -380,7 +382,7 @@ function EvalRunView({
         header={{
           path: [
             ...scope,
-            { label: "evals", href: "/evals" },
+            pw("evals", "/evals"),
             { label: data.setName ?? run.setId, href: `/evals/${encodeURIComponent(run.setId)}` },
             { label: formatDateTime(run.createdAt, "full", timeZone) },
           ],

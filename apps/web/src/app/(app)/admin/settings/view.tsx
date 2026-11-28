@@ -30,7 +30,7 @@ import {
 import { NoAccess } from "../../../../components/NoAccess";
 import { CompactionSection } from "../../../../components/settings/CompactionSection";
 import { PromptCacheSection } from "../../../../components/settings/PromptCacheSection";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
 import {
   UiPlacementSection,
@@ -133,6 +133,7 @@ const RADIOS = [{ control: "radio-cards" as const, options: 2 }];
 
 function AdminSettingsRead() {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("admin.settings");
   const tc = useTranslations("common");
   const read = usePageQuery(deploymentSettingsQuery());
@@ -143,7 +144,7 @@ function AdminSettingsRead() {
   const tps = useTranslations("promptSuggestions");
   const tsh = useTranslations("admin.settings.sharing");
   const tlm = useTranslations("loginSources.methods");
-  const header = { path: [...scope, { label: "settings" }], title: t("title") };
+  const header = { path: [...scope, pw("settings")], title: t("title") };
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {

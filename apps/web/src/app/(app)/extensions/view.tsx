@@ -26,7 +26,7 @@ import { FilePreviewersSection } from "../../../components/FilePreviewersSection
 import { NoAccess } from "../../../components/NoAccess";
 import { OrgExtensionSheet } from "../../../components/OrgExtensionSheet";
 import { PointDefaultsSection } from "../../../components/PointDefaultsSection";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import {
   type OrgExtensionRow,
   useOrgExtensionActions,
@@ -112,6 +112,7 @@ function Extensions({
   initialTab: ExtensionTab;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("extensions");
   const read = usePageQuery(orgExtensionsQuery(orgId));
   const [tab, setTab] = useExtensionTab(initialTab);
@@ -120,7 +121,7 @@ function Extensions({
   const counts = extensions === null ? null : tabCounts(extensions, (e) => capabilityGroups(e));
   const tabItems = useExtensionTabItems(counts, setTab);
   const header = {
-    path: [...scope, { label: "extensions" }],
+    path: [...scope, pw("extensions")],
     title: t("title"),
     description: t("description"),
     tabs: tabItems,

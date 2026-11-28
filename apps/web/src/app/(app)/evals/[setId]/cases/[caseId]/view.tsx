@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../../components/shell/path";
 import {
   ParentTrajectoryLink,
   SpanDetail,
@@ -42,6 +42,7 @@ export default function EvalCaseView({ setId, caseId }: { setId: string; caseId:
 
 function EvalCase({ orgId, setId, caseId }: { orgId: string; setId: string; caseId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const detail = usePageQuery(evalCaseQuery(orgId, setId, caseId));
   const setQ = evalSetQuery(orgId, setId);
   const set = useQuery({ ...setQ, retryOnMount: retryOnMountOf(setQ.queryKey) }).data;
@@ -53,7 +54,7 @@ function EvalCase({ orgId, setId, caseId }: { orgId: string; setId: string; case
   if (detail.kind === "loading" || names.kind === "loading") {
     return (
       <TracePage
-        header={{ path: [...scope, { label: "evals", href: "/evals" }, parent], title: "" }}
+        header={{ path: [...scope, pw("evals", "/evals"), parent], title: "" }}
         waterfall={null}
         detail={null}
         loading={{}}
@@ -73,6 +74,7 @@ function CaseTrajectory({
   people: Record<string, string>;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("evals");
   const tt = useTranslations("trajectories.detail");
   const runs = detail.trajectory;
@@ -94,7 +96,7 @@ function CaseTrajectory({
   return (
     <TracePage
       header={{
-        path: [...scope, { label: "evals", href: "/evals" }, parent, { label: detail.case.title }],
+        path: [...scope, pw("evals", "/evals"), parent, { label: detail.case.title }],
         title: t("case.title", { title: detail.case.title }),
         metrics,
       }}

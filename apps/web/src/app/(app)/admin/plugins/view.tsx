@@ -13,7 +13,7 @@ import {
   usePluginsHead,
   useScopeLabel,
 } from "../../../../components/PluginsHead";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { issueLines } from "../../../../lib/api";
 import {
@@ -60,17 +60,14 @@ export default function AdminPluginsView() {
 
 function AdminPluginsRead() {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const head = usePluginsHead("installed");
   const read = usePageQuery(catalogItemsQuery());
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
     return (
-      <ListPage
-        header={{ ...head, path: [...scope, { label: "plugins" }] }}
-        variant="cards"
-        loading
-      />
+      <ListPage header={{ ...head, path: [...scope, pw("plugins")] }} variant="cards" loading />
     );
   }
   return <AdminPlugins all={read.data.items} />;
@@ -78,6 +75,7 @@ function AdminPluginsRead() {
 
 function AdminPlugins({ all }: { all: CatalogItem[] }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const head = usePluginsHead("installed");
   const t = useTranslations("catalog.admin");
   const td = useTranslations("catalog");
@@ -159,7 +157,7 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
     <ListPage
       header={{
         ...head,
-        path: [...scope, { label: "plugins" }],
+        path: [...scope, pw("plugins")],
         // An empty list has nothing to search.
         ...(all.length > 0 ? { search: { label: t("search"), value: q, onChange: setQ } } : {}),
       }}

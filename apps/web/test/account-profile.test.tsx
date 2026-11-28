@@ -185,7 +185,8 @@ describe("/account/profile", () => {
       .getAllByRole("link")
       // the path line's `account` link is not part of the navigation
       .filter(
-        (a) => a.getAttribute("href")?.startsWith("/account/") && a.textContent !== "account",
+        (a) =>
+          a.getAttribute("href")?.startsWith("/account/") && a.textContent !== zh.path.home.account,
       );
     expect(links[0]?.textContent).toBe(zh.connections.nav.profile);
     expect(links[0]?.getAttribute("href")).toBe("/account/profile");
@@ -194,7 +195,7 @@ describe("/account/profile", () => {
   it("the path's `account` leads to /account/profile", async () => {
     api(ME);
     await renderRouteWithCache(PATH, lastStubRoutes());
-    const link = await screen.findByRole("link", { name: "account" });
+    const link = await screen.findByRole("link", { name: en.path.home.account });
     expect(link.getAttribute("href")).toBe("/account/profile");
   });
 });

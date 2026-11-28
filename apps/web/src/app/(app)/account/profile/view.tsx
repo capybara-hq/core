@@ -19,7 +19,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { ApiClientError } from "../../../../lib/api";
 import type { AuthSource } from "../../../../lib/auth-sources";
 import { cropAvatar } from "../../../../lib/avatar-crop";
@@ -72,6 +72,7 @@ export default function ProfileView() {
 
 function ProfileForm({ account }: { account: Account }) {
   const scope = usePagePath("home");
+  const pw = usePathWord("home");
   const t = useTranslations("profile");
   const tc = useTranslations("common");
   const locale = useLocale();
@@ -152,7 +153,7 @@ function ProfileForm({ account }: { account: Account }) {
   return (
     <SettingsPage
       header={{
-        path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "profile" }],
+        path: [...scope, pw("account", ACCOUNT_HOME), pw("profile")],
         title: t("title"),
       }}
       nav={nav}

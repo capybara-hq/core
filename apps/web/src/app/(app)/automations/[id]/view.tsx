@@ -39,7 +39,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { Person } from "../../../../components/Person";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { ProviderModels } from "../../../../lib/agents";
 import {
@@ -105,6 +105,7 @@ function Schedule({
   admin: boolean;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("automations");
   const read = usePageQuery(automationQuery(orgId, id));
   const agentsQ = agentsQuery(orgId);
@@ -120,7 +121,7 @@ function Schedule({
       <FormPage
         loading
         header={{
-          path: [...scope, { label: "automations", href: "/automations" }, { label: id }],
+          path: [...scope, pw("automations", "/automations"), { label: id }],
           title: t("title"),
           loading: { title: true, actions: 3 },
         }}
@@ -180,6 +181,7 @@ function AutomationForm({
   admin: boolean;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("automations");
   const tc = useTranslations("common");
   const router = useRouter();
@@ -283,7 +285,7 @@ function AutomationForm({
     <>
       <FormPage
         header={{
-          path: [...scope, { label: "automations", href: "/automations" }, { label: task.name }],
+          path: [...scope, pw("automations", "/automations"), { label: task.name }],
           title: task.name,
           status: <AutomationStateMark task={task} />,
           // An org admin on another member's task: pause or resume only (no run, no edit); an
