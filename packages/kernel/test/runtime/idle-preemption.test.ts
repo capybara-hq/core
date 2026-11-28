@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { newTaskId, taskOutputPath } from "../../src/background/launch.js";
@@ -97,6 +98,7 @@ afterAll(async () => {
 beforeEach(async () => {
   delete hooks.afterRunRead;
   delete hooks.beforeRelease;
+  delete hooks.beforeRunStarted;
   await holdModelCalls(0);
 });
 
@@ -198,6 +200,17 @@ async function conversationRow(conv: string) {
     .select(["queue_paused", "tree_stopped_at"])
     .where("id", "=", conv)
     .executeTakeFirstOrThrow();
+}
+
+/** The idle run is still running and no stop was requested for it (the input's ensureRun ran). */
+async function expectNotPreempted(runId: string): Promise<void> {
+  const row = await db
+    .selectFrom("runs")
+    .select("status")
+    .where("id", "=", runId)
+    .executeTakeFirstOrThrow();
+  expect(row.status).toBe("running");
+  expect(await k.app.get(RunAbort).requested(runId)).toBeNull();
 }
 
 /** Finishes a background task of `conv` as the poller does (no process: a bare task row). */
@@ -302,20 +315,101 @@ describe("idle compaction preemption (idle compaction spec §5.2)", () => {
     });
   });
 
-  it("a background task finish inside its wake window does not preempt", async () => {
+  it("a background task finish inside a wake run's window does not preempt", async () => {
     const conv = await settled();
-    // a first finish wakes the conversation: its wake window is open for the next minute
+    // a first finish wakes the conversation: the wake run's window is open for the next minute
     await finishTask(conv);
     await waitForTerminal(db, conv, 7, 20_000);
     await holdModelCalls(3_000);
     const idle = await startIdle(conv);
     await summarizing(idle);
+    // the finish's ensureRun runs before finish() returns (after its commit)
     await finishTask(conv);
+    await expectNotPreempted(idle);
     await holdModelCalls(0);
     await runStatus(idle, "completed");
     const events = await eventsOf(db, conv);
     expect(ev(forRun(events, idle), "run_aborted")).toEqual([]);
     expect(ev(forRun(events, idle), "compaction_summary")).toHaveLength(1);
+  });
+
+  it("an idle run whose boundary is a wake event opens no wake window: a finish preempts it", async () => {
+    const conv = await settled();
+    await finishTask(conv);
+    await waitForTerminal(db, conv, 7, 20_000);
+    // the wake run's window is over (moved back in time instead of waiting a minute)
+    await db
+      .updateTable("runs")
+      .set({ created_at: sql<Date>`now() - interval '2 minutes'` })
+      .where("conversation_id", "=", conv)
+      .execute();
+    await holdModelCalls(60_000);
+    const idle = await startIdle(conv);
+    // the idle run's boundary (the consumed seq) is the wake run's background_task_finished
+    const before = await eventsOf(db, conv);
+    const idleRow = await db
+      .selectFrom("runs")
+      .select("trigger_seq")
+      .where("id", "=", idle)
+      .executeTakeFirstOrThrow();
+    expect(before.find((e) => e.seq === Number(idleRow.trigger_seq))?.type).toBe(
+      "background_task_finished",
+    );
+    await summarizing(idle);
+    await holdModelCalls(0);
+    await finishTask(conv);
+    await runStatus(idle, "aborted");
+    const [next] = await runsAfter(conv, idle);
+    const events = await eventsOf(db, conv);
+    expect(supersededOnly(events, idle)).toEqual([{ byAccountId: null, reason: "superseded" }]);
+    expect(ev(forRun(events, next?.id as string), "run_started")[0]?.payload).toMatchObject({
+      trigger: "background_task",
+    });
+  });
+
+  it("a message while the idle run holds the lock before its run_started ends it before any model call", async () => {
+    const conv = await settled();
+    const paused = gate();
+    let reached!: (runId: string) => void;
+    const atStart = new Promise<string>((r) => {
+      reached = r;
+    });
+    let first = true;
+    // the idle run's worker holds the conversation lock; the run is still queued
+    hooks.beforeRunStarted = async (runId, conversationId) => {
+      if (conversationId !== conv || !first) return;
+      first = false;
+      reached(runId);
+      await paused.promise;
+    };
+    const idle = await startIdle(conv);
+    try {
+      expect(await atStart).toBe(idle);
+      expect(await k.app.get(ConversationLock).holder(conv)).toBe(idle);
+      await postMessage(owner, orgId, conv, "echo:before the start");
+      // the stop is stored for the worker to read; the run is not ended from the message's side
+      expect(await k.app.get(RunAbort).requested(idle)).toEqual({
+        byAccountId: null,
+        reason: "superseded",
+      });
+      const row = await db
+        .selectFrom("runs")
+        .select("status")
+        .where("id", "=", idle)
+        .executeTakeFirstOrThrow();
+      expect(row.status).toBe("queued");
+    } finally {
+      paused.open();
+    }
+    await runStatus(idle, "aborted");
+    const [next] = await runsAfter(conv, idle);
+    const events = await eventsOf(db, conv);
+    expect(supersededOnly(events, idle)).toEqual([{ byAccountId: null, reason: "superseded" }]);
+    expect(ev(forRun(events, idle), "usage")).toEqual([]);
+    expect(ev(forRun(events, idle), "compaction_summary")).toEqual([]);
+    expect(await redis.get(compactionProgressKey(idle))).toBeNull();
+    expect(Number(next?.trigger_seq)).toBe(ev(events, "user_message").at(-1)?.seq);
+    expect(await conversationRow(conv)).toEqual({ queue_paused: false, tree_stopped_at: null });
   });
 
   it("a queued message preempts and the queue is not paused afterwards", async () => {
@@ -353,6 +447,7 @@ describe("idle compaction preemption (idle compaction spec §5.2)", () => {
     const { runId: manual } = res.json() as { runId: string };
     await summarizing(manual);
     await postMessage(owner, orgId, conv, "echo:during the manual compaction");
+    await expectNotPreempted(manual);
     await holdModelCalls(0);
     await runStatus(manual, "completed");
     await runsAfter(conv, manual);

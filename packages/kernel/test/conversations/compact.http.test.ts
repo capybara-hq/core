@@ -783,6 +783,33 @@ describe("idle compact runs (idle compaction spec §5.1, §5.2)", () => {
     expect(await startIdle(orgId, conv, armedSeq)).toBeNull();
   });
 
+  it("refuses (null) when the owner can no longer use the conversation", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const armedSeq = await armedSeqOf(conv);
+    await db
+      .updateTable("accounts")
+      .set({ status: "disabled" })
+      .where("id", "=", ownerId)
+      .execute();
+    try {
+      expect(await startIdle(orgId, conv, armedSeq)).toBeNull();
+    } finally {
+      await db
+        .updateTable("accounts")
+        .set({ status: "active" })
+        .where("id", "=", ownerId)
+        .execute();
+    }
+    const compactRuns = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .where("compact", "=", true)
+      .execute();
+    expect(compactRuns).toEqual([]);
+  });
+
   it("a manual compaction while the idle run is active returns the idle run", async () => {
     const { orgId, conv } = await setup();
     await seedTurns(orgId, conv, 6);

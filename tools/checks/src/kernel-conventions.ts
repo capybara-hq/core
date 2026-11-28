@@ -276,6 +276,14 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "on the database itself, like the kernel migration runner's",
   },
   {
+    rule: "kc-lock",
+    path: "packages/kernel/src/runtime/abort.ts",
+    within: "requestIfAbsent",
+    reason:
+      "a stop marker written only when none is stored (SET NX), not a lock: the kernel's " +
+      "superseded stop of an idle compact run never relabels a person's stop racing it",
+  },
+  {
     rule: "kc-queue",
     path: "packages/kernel/src/ctx/queue.ts",
     reason:

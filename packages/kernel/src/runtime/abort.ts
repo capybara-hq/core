@@ -77,6 +77,35 @@ export class RunAbort {
   }
 
   /**
+   * Requests the kernel's stop of a run only when no stop was requested yet: the marker is written
+   * with SET NX (atomic, so a person's stop racing it is never relabelled) and broadcast only when
+   * this call wrote it. True when it did. A plain {@link request} still overwrites the marker, so a
+   * person's later stop replaces a kernel one.
+   */
+  async requestIfAbsent(
+    runId: string,
+    byAccountId: string | null,
+    opts: { detail?: RunAbortDetail | undefined; reason?: RunAbortReason | undefined } = {},
+  ): Promise<boolean> {
+    const by: RunAbortBy = {
+      byAccountId,
+      ...(opts.detail !== undefined && { detail: opts.detail }),
+      ...(opts.reason !== undefined && { reason: opts.reason }),
+    };
+    const set = await this.redis.set(
+      abortKey(runId),
+      JSON.stringify(by),
+      "EX",
+      ABORT_TTL_SECONDS,
+      "NX",
+    );
+    if (set === null) return false;
+    const msg: AbortMessage = { runId, ...by };
+    await this.bus.publish(RUN_ABORT_TOPIC, msg);
+    return true;
+  }
+
+  /**
    * Whether a stop of this run was requested (reads the marker key): who asked (and why, when the
    * kernel did: `detail`, `reason`), or null. For the moments without a subscriber (a run that just suspended and is
    * about to become `waiting`), to pick up a stop that arrived meanwhile.

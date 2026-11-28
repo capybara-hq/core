@@ -97,7 +97,7 @@ export class RunQueue {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     /** Preemption of an idle compact run: the cross-replica stop its worker watches. */
-    @Inject(RunAbort) private readonly abort: Pick<RunAbort, "request" | "requested">,
+    @Inject(RunAbort) private readonly abort: Pick<RunAbort, "requestIfAbsent">,
     @Optional()
     @Inject(ENSURE_RUN_FAILS)
     private readonly ensureFails: () => boolean = () => false,
@@ -256,7 +256,7 @@ export class RunQueue {
    * idle job calls it at fire time, and a refusal or a failure only means no idle compaction now
    * (the next run's finish arms again). Under the conversation row lock (the one `ensureRun` and
    * {@link startCompaction} take) it re-checks that the conversation, its org and its agent are
-   * live, that nothing but a run-less side-call `usage` (`isIdleNeutralEvent`, S1) was written
+   * live, that its owner can still use it (active, the agent visible to them), that nothing but a run-less side-call `usage` (`isIdleNeutralEvent`, S1) was written
    * after `armedSeq`, and that the conversation is not busy: no active run (queued, running or
    * waiting), no unconsumed message, no queue head. The run is a `compact` run with
    * `compact_origin = 'idle'`, run as the conversation's owner, its boundary the current
@@ -331,6 +331,8 @@ export class RunQueue {
       .where("org_id", "=", conv.org_id)
       .executeTakeFirst();
     if (!agent || agent.deleted_at !== null) return null;
+    // the run runs as the owner: only while they can still use the conversation (ensureRunIn's rule)
+    if (!(await authorCanSend(t, conversationId, conv.account_id))) return null;
     const jobId = await this.jobIdFor(conversationId, Number(conv.consumed_seq));
     const runId = randomUUID();
     if (!(await this.oweJob(conversationId, runId, jobId.id, "chat", conv.org_id))) return null;
@@ -404,7 +406,10 @@ export class RunQueue {
         st.preempt = active.id;
         return null;
       }
-      // the idle run is over: the input's run is decided below, as on an idle conversation
+      // the idle run is over: the input's run is decided below, as on an idle conversation. Rarely
+      // the input was a queue head that dispatchQueuedIn then pauses on (a skill that can no
+      // longer be invoked): the idle run is ended for nothing, which is harmless (the next run's
+      // finish arms again)
     }
     if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
       // Nothing unconsumed: the queue's head goes out when the queue is not paused. Interjections
@@ -645,11 +650,11 @@ export class RunQueue {
 
   /**
    * Sends the `superseded` stop of an idle compact run, after the commit that decided it. A stop
-   * already requested (a person's, racing the input) is left as it is: it is never relabelled.
+   * already requested (a person's, racing the input) is left as it is: it is never relabelled
+   * (SET NX on the marker, {@link RunAbort.requestIfAbsent}).
    */
   private async supersede(runId: string): Promise<void> {
-    if ((await this.abort.requested(runId)) !== null) return;
-    await this.abort.request(runId, null, { reason: "superseded" });
+    await this.abort.requestIfAbsent(runId, null, { reason: "superseded" });
   }
 
   /**
