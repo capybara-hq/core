@@ -1675,6 +1675,7 @@
       "compacted": "较早的会话已压缩",
       "compactedSaved": "较早的会话已压缩 · 节省 {n} tokens",
       "compactedIdle": "较早的会话已在空闲时压缩 · 节省 {n} tokens",
+      "compactedIdleNoCount": "较早的会话已在空闲时压缩",
       "compactedIdleHelp": "可以在账户偏好里关闭。",
       "compactFailed": "压缩失败：{reason}",
       "fallback": "所选模型 {from} 已不可用，本条起改用智能体的模型 {to}",

@@ -1008,7 +1008,11 @@ function DividerView({
           text={
             e.idle === true
               ? // the idle divider carries its help line (where to turn it off) after the count
-                `${t("divider.compactedIdle", { n: e.savedTokens ?? 0 })} · ${t("divider.compactedIdleHelp")}`
+                `${
+                  e.savedTokens !== null
+                    ? t("divider.compactedIdle", { n: e.savedTokens })
+                    : t("divider.compactedIdleNoCount")
+                } · ${t("divider.compactedIdleHelp")}`
               : e.savedTokens !== null
                 ? t("divider.compactedSaved", { n: e.savedTokens })
                 : t("divider.compacted")

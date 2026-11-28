@@ -6,6 +6,7 @@ import {
   buildEventTimeline,
   buildTimeline,
   composerWait,
+  isIdleCompactRun,
   latestUsage,
   messageFiles,
   runStats,
@@ -2704,5 +2705,17 @@ describe("messageFiles", () => {
       [a, "a.png"],
       [b, b],
     ]);
+  });
+});
+
+describe("isIdleCompactRun", () => {
+  const started = (runId: string, extra: Record<string, unknown>) =>
+    ev(1, "run_started", { trigger: "compact", ...extra }, runId);
+  it("is true only for a run whose run_started has compactOrigin idle", () => {
+    const events = [started("r1", { compactOrigin: "idle" }), started("r2", {})];
+    expect(isIdleCompactRun(events, "r1")).toBe(true);
+    expect(isIdleCompactRun(events, "r2")).toBe(false);
+    expect(isIdleCompactRun(events, "r3")).toBe(false);
+    expect(isIdleCompactRun(events, undefined)).toBe(false);
   });
 });

@@ -1675,6 +1675,7 @@
       "compacted": "Earlier conversation compacted",
       "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
       "compactedIdle": "Earlier conversation compacted while idle · saved {n} tokens",
+      "compactedIdleNoCount": "Earlier conversation compacted while idle",
       "compactedIdleHelp": "Turn this off in your account preferences.",
       "compactFailed": "Compaction failed: {reason}",
       "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message",
