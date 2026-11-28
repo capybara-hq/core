@@ -17,14 +17,22 @@ export type CalendarRange = "week" | "month";
 export type CalendarScope = "mine" | "all";
 export type CalendarItemState = "upcoming" | "running" | "completed" | "failed" | "skipped";
 
-/** What the address says (`?view=list`, or the calendar's `?range=week|month&date=YYYY-MM-DD&scope=all`). */
+/**
+ * What the address says (`?view=list`, or the calendar's `?range=week|month&date=YYYY-MM-DD&scope=all`;
+ * either with `rules=1`, the acceptance rules sheet open).
+ */
 export interface AutomationsUrl {
   view: AutomationsView;
   range: CalendarRange;
   /** A day of the shown week or month; null: today. */
   date: string | null;
   scope: CalendarScope;
+  /** The acceptance rules sheet is open (`?rules=1`), over either view. */
+  rules: boolean;
 }
+
+/** The search parameters `/automations` keeps its state in. */
+export const AUTOMATIONS_PARAMS = ["view", "range", "date", "scope", "rules"] as const;
 
 /** The last chosen tab and range, per browser (calendar spec §4.1, Q5). */
 export const AUTOMATIONS_VIEW_COOKIE = "cap_automations_view";
@@ -81,16 +89,23 @@ export function automationsUrlOf(search: SearchLike, cookie?: string): Automatio
     range: parseRange(param(search, "range")) ?? remembered.range ?? "week",
     date: isDay(date) ? date : null,
     scope: param(search, "scope") === "all" ? "all" : "mine",
+    rules: param(search, "rules") === "1",
   };
 }
 
-/** The address of a state (`?view=list` for the list; the calendar with what differs). */
+/**
+ * The address of a state (`?view=list` for the list; the calendar with what differs; `rules=1`
+ * last while the rules sheet is open).
+ */
 export function automationsSearch(s: AutomationsUrl): string {
-  if (s.view === "list") return "?view=list";
   const q = new URLSearchParams();
-  if (s.range === "month") q.set("range", "month");
-  if (s.date !== null) q.set("date", s.date);
-  if (s.scope === "all") q.set("scope", "all");
+  if (s.view === "list") q.set("view", "list");
+  else {
+    if (s.range === "month") q.set("range", "month");
+    if (s.date !== null) q.set("date", s.date);
+    if (s.scope === "all") q.set("scope", "all");
+  }
+  if (s.rules) q.set("rules", "1");
   const query = q.toString();
   return query === "" ? "" : `?${query}`;
 }

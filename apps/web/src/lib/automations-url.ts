@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "../i18n/navigation";
 import {
+  AUTOMATIONS_PARAMS,
   AUTOMATIONS_VIEW_COOKIE,
   type AutomationsUrl,
   automationsSearch,
@@ -15,9 +16,10 @@ import {
 import { cookieOf } from "./cookies";
 
 /**
- * The state of `/automations` (list or calendar, range, date, scope; calendar spec §4.1): held in
- * state for an instant switch and written to the address with `history.replaceState` (Next keeps
- * its router's search params in step, as `useUrlParam` does), so a reload, Back and a shared link
+ * The state of `/automations` (list or calendar, range, date, scope, the rules sheet; calendar
+ * spec §4.1): held in state for an instant switch and written to the address with
+ * `history.replaceState` (Next keeps its router's search params in step, as `useUrlParam` does),
+ * so a reload, Back and a shared link
  * show the same view. The tab and the range are also written to the `cap_automations_view` cookie,
  * which the server reads for the next document's first paint. `initial` is what `page.tsx` read
  * from the address and the cookie; when it changes (a navigation to `/automations` with other
@@ -35,7 +37,7 @@ export function useAutomationsUrl(
     setValue(initial);
   }
   const params = useSearchParams();
-  const address = ["view", "range", "date", "scope"].map((n) => params.get(n) ?? "").join("|");
+  const address = AUTOMATIONS_PARAMS.map((n) => params.get(n) ?? "").join("|");
   const [seenAddress, setSeenAddress] = useState(address);
   // The address this hook wrote last: its own writes are already the state.
   const written = useRef<string | null>(null);
@@ -60,7 +62,7 @@ export function useAutomationsUrl(
     const hash = next.view === "calendar" ? url.hash : "";
     const search = automationsSearch(next);
     const q = new URLSearchParams(search);
-    written.current = ["view", "range", "date", "scope"].map((n) => q.get(n) ?? "").join("|");
+    written.current = AUTOMATIONS_PARAMS.map((n) => q.get(n) ?? "").join("|");
     window.history.replaceState(window.history.state, "", url.pathname + search + hash);
   };
   return [value, select];

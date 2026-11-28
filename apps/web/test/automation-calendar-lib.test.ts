@@ -28,6 +28,7 @@ describe("schedule calendar: address and cookie", () => {
       range: "week",
       date: null,
       scope: "mine",
+      rules: false,
     });
     expect(automationsUrlOf({}, "list.month")).toMatchObject({ view: "list", range: "month" });
     expect(automationsUrlOf({ view: "calendar" }, "list.month")).toMatchObject({
@@ -40,23 +41,41 @@ describe("schedule calendar: address and cookie", () => {
     });
     expect(
       automationsUrlOf(new URLSearchParams("view=calendar&range=week&date=2026-11-12&scope=all")),
-    ).toEqual({ view: "calendar", range: "week", date: "2026-11-12", scope: "all" });
+    ).toEqual({ view: "calendar", range: "week", date: "2026-11-12", scope: "all", rules: false });
+    // the rules sheet opens over either view
+    expect(automationsUrlOf({ view: "list", rules: "1" })).toMatchObject({
+      view: "list",
+      rules: true,
+    });
+    expect(automationsUrlOf({ rules: "yes" })).toMatchObject({ rules: false });
     // nonsense reads as nothing
     expect(automationsUrlOf({ view: "grid", date: "2026-02-30" }, "x.y")).toEqual({
       view: "calendar",
       range: "week",
       date: null,
       scope: "mine",
+      rules: false,
     });
   });
 
   it("writes the calendar as the bare page with what differs, the list as ?view=list", () => {
-    const base = { view: "calendar", range: "week", date: null, scope: "mine" } as const;
+    const base = {
+      view: "calendar",
+      range: "week",
+      date: null,
+      scope: "mine",
+      rules: false,
+    } as const;
     expect(automationsSearch(base)).toBe("");
     expect(automationsSearch({ ...base, range: "month", date: "2026-11-01", scope: "all" })).toBe(
       "?range=month&date=2026-11-01&scope=all",
     );
     expect(automationsSearch({ ...base, view: "list" })).toBe("?view=list");
+    expect(automationsSearch({ ...base, rules: true })).toBe("?rules=1");
+    expect(automationsSearch({ ...base, view: "list", rules: true })).toBe("?view=list&rules=1");
+    expect(automationsSearch({ ...base, range: "month", rules: true })).toBe(
+      "?range=month&rules=1",
+    );
   });
 
   it("the cookie holds the tab and the range for a year, Lax", () => {

@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SandboxWorkUnsettledError } from "@capybara-hq/plugin-sdk";
+import { isSandboxScopeDeniedError, SandboxWorkUnsettledError } from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   LEGACY_MARGIN_MS,
@@ -1287,6 +1287,44 @@ it("an unknown exec of a lost process keeps its identity past retention and keep
 
 // A settled entry is dropped an hour past its retention; anything still owed stays. The commit
 // that pruned is accepted as the successor on restart, and the dropped id stays spent.
+it("an admission that lapses while the device is busy is no scope refusal: nothing ran, retry", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-lapse-"));
+  dirs.push(stateDir);
+  let now = 1;
+  let spawned = false;
+  const supervisor = new MacOperationSupervisor({
+    stateDir,
+    deviceId: "d",
+    instanceGeneration: "g",
+    now: () => now,
+    start: async (r: MacWorkerRequest) => {
+      // the device took past the admission deadline to reach the launch
+      now = 50_000;
+      await r.beforeLaunch();
+      spawned = true;
+      throw Error("must not launch");
+    },
+  });
+  const request = {
+    kind: "native" as const,
+    native: { method: "stat" as const, path: "/f" },
+    purpose: "operation" as const,
+    scope: { ...scope, operationId: "late", tag: "late", admitBeforeMs: 30_000 },
+    grant,
+    stateDir,
+    pythonPath: "/usr/bin/python3",
+    beforeLaunch: async () => {},
+    onLaunch: async () => {},
+  };
+  const error = await supervisor.execute(request, "h", signal).then(
+    () => undefined,
+    (e: unknown) => e,
+  );
+  expect(spawned).toBe(false);
+  expect(isSandboxScopeDeniedError(error)).toBe(false);
+  expect((error as Error).message).toMatch(/too busy.*nothing ran.*retry/);
+});
+
 it("prunes settled entries past retention, keeps owed ones, and a restart accepts the pruned commit", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-prune-"));
   dirs.push(stateDir);
@@ -1459,6 +1497,49 @@ describe("orphans a lost device process left behind", () => {
     expect(supervisor.retirementObligations("next")).toBe(0);
     await supervisor.settleOrphans();
     expect(supervisor.retirementObligations("next")).toBe(0);
+  });
+
+  it("a revoked operation that never launched stops for good: the owner reconcile no longer rewrites the journal", async () => {
+    const { stateDir, file } = await journalAt([
+      entry("r1", { revoked: true, hash: "revoked", stop: { outcome: "cancel-pending" } }),
+      entry("r2", { revoked: true, hash: "revoked", stop: { outcome: "cancel-pending" } }),
+    ]);
+    const revision = async () =>
+      JSON.parse(await readFile(file, "utf8")).transaction?.revision as number | undefined;
+    const supervisor = open(stateDir, table([]).processes);
+    await supervisor.settleOrphans();
+    // the reconcile the owner ceiling check runs every two seconds
+    await supervisor.reconcile(() => true, signal);
+    const entries = JSON.parse(await readFile(file, "utf8")).entries;
+    expect(byId(entries, "r1")).toMatchObject({ revoked: true, stop: { outcome: "stopped" } });
+    expect(byId(entries, "r2")).toMatchObject({ revoked: true, stop: { outcome: "stopped" } });
+    const settled = await revision();
+    for (let i = 0; i < 5; i++) await supervisor.reconcile(() => true, signal);
+    expect(await revision()).toBe(settled);
+    expect(await supervisor.stop(byId(entries, "r1").ref as never, { graceMs: 0, signal })).toEqual(
+      { outcome: "stopped" },
+    );
+    expect(await revision()).toBe(settled);
+  });
+
+  it("a lost process's owed stop is journaled once, not at every reconcile", async () => {
+    const { stateDir, file } = await journalAt([
+      entry("lost", {
+        identity: { pid: 63001, token: "t" },
+        revoked: true,
+        stop: { outcome: "cancel-pending" },
+      }),
+    ]);
+    const revision = async () =>
+      JSON.parse(await readFile(file, "utf8")).transaction?.revision as number | undefined;
+    // its process is still there and not provably gone: the stop stays owed
+    const supervisor = open(stateDir);
+    await supervisor.reconcile(() => true, signal);
+    const owed = await revision();
+    for (let i = 0; i < 5; i++) await supervisor.reconcile(() => true, signal);
+    expect(await revision()).toBe(owed);
+    const entries = JSON.parse(await readFile(file, "utf8")).entries;
+    expect(byId(entries, "lost")).toMatchObject({ stop: { outcome: "cancel-pending" } });
   });
 
   it("settles a reused pid without a signal: another group's member, or a leader started later", async () => {

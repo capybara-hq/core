@@ -271,12 +271,6 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
         : [q(pushRegistrationsQuery(me.account.id)), q(pushPreferencesQuery(me.account.id))],
   },
   {
-    pattern: "/account/automations",
-    // Members up, in the current org: my acceptance rules for the sources that assign work.
-    queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member") ? [] : [q(acceptanceRulesQuery(orgId))],
-  },
-  {
     pattern: "/account/shares",
     // Every role, guests too (sharing needs `agents.use`, which guests hold): the person's own
     // shares; the nav offers the page to everyone.
@@ -1278,13 +1272,18 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/automations",
-    // Members up (guests get no access): my tasks, the agents that name them and the org's
-    // settings (turned off; sections). The calendar view (the address, else the remembered view)
+    // Members up (guests get no access): my tasks, the agents that name them, the org's settings
+    // (turned off; sections) and my acceptance rules (the head's Acceptance rules action and its sheet). The calendar view (the address, else the remembered view)
     // also needs the range it shows, keyed by the viewer's zone: only when the server knows it
     // (the `cb-tz` cookie), else the view reads it on mount (calendar spec §9).
     queries: ({ orgId, me, search, cookie, now }) => {
       if (orgId === null || !atLeast(me, "member")) return [];
-      const base = [q(automationsQuery(orgId)), q(agentsQuery(orgId)), q(orgSettingsQuery(orgId))];
+      const base = [
+        q(automationsQuery(orgId)),
+        q(agentsQuery(orgId)),
+        q(orgSettingsQuery(orgId)),
+        q(acceptanceRulesQuery(orgId)),
+      ];
       const url = automationsUrlOf(search, cookie(AUTOMATIONS_VIEW_COOKIE));
       const timeZone = parseTimeZone(cookie(TIME_ZONE_COOKIE));
       if (url.view !== "calendar" || timeZone === undefined) return base;
