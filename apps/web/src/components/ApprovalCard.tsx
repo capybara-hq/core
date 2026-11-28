@@ -421,9 +421,9 @@ export function ApprovalCard({
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
   // the scopes exactly as the view lists them: a network ask may offer "always" (add the hosts to
   // the device's own list)
-  // a loopback ask offers its one choice (for this conversation) as the block's single button
+  // a loopback ask offers one choice, for this conversation
   const scopes =
-    loopback !== undefined ? (["once"] as const) : view ? scopesFor(view) : (["once"] as const);
+    loopback !== undefined ? (["session"] as const) : view ? scopesFor(view) : (["once"] as const);
   // A permission change replaced the ask before anyone decided it: a final line, never actions.
   if (outcome?.decision === "superseded") {
     return (
@@ -562,8 +562,7 @@ export function ApprovalCard({
         {...(network !== undefined ? { network } : {})}
         {...(loopback !== undefined
           ? {
-              scopeLabels: { once: t("network.loopbackAllow") },
-              scopeHints: { once: "" },
+              scopeLabels: { session: t("network.loopbackAllow") },
             }
           : {})}
         {...(command !== undefined ? { command } : {})}
@@ -580,9 +579,12 @@ export function ApprovalCard({
           : {})}
         {...(secureInput !== undefined ? { secureInput } : {})}
         onApprove={(scope, hosts) =>
-          loopback !== undefined
-            ? void onDecide("approve", "session")
-            : void onDecide("approve", scope, undefined, network !== undefined ? hosts : undefined)
+          void onDecide(
+            "approve",
+            scope,
+            undefined,
+            network !== undefined && loopback === undefined ? hosts : undefined,
+          )
         }
         onDeny={(reason) => void onDecide("deny", "once", reason)}
         {...details}
