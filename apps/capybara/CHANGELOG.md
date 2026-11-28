@@ -1,5 +1,19 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.140
+
+### Patch Changes
+
+- c36595e: Acceptance rules move from the personal page `/account/automations` into a 接收规则 / Acceptance
+  rules sheet on the automations page (`/automations?rules=1`), opened from the page head while a
+  source directs events to you; acceptance automations carry the same tag in the list, and the
+  rules' copy is neutral about the source.
+- 9d1f819: A new conversation with a device project picked lists that project's skills in the `/` menu (as
+  last read in one of your conversations, without asking the device), and its first message can
+  invoke one; a bound conversation whose first run has not read the project yet does the same.
+- Updated dependencies [9d1f819]
+  - @capybara-hq/kernel@0.1.0-rc.113
+
 ## 0.1.0-rc.139
 
 ### Patch Changes
