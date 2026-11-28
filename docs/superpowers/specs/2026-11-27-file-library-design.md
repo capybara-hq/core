@@ -288,8 +288,9 @@ Web (`apps/web`, page template + design components, every read a `defineQuery`, 
     sheet; search collapses to an icon that expands the field; the preview is its own screen with a
     top bar (back, share, download, more). Controls take the mobile sizes.
 - **Composer `@`:** the `@` menu queries `GET …/files?q=<text after @>&limit=8` and the connector
-  resources together; groups "最近文件" (files) above the connectors' groups; picking a file adds it to
-  the attachment strip as an already-uploaded file. On compact the menu is a bottom sheet.
+  resources together; groups "最近文件" (files) above the connectors' groups; picking a file inserts a `file` token at the caret (composer inline tokens spec 2026-11-28 §1; its
+  id goes into the message's `tokens`, not `files`; uploads by drop, paste or ＋ 上传文件 stay cards in
+  the attachment strip). On compact the menu is a bottom sheet.
 - **Conversation right panel:** unchanged list; each file links to its page in Files.
 
 ### 7. Deleting bytes
