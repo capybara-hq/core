@@ -978,7 +978,7 @@ States: `default`, `placeholder`, `open`, `person`, `long`, `disabled`, `error`
 | input-control | default | color | color.ink |
 | select-label[data-placeholder=true] | placeholder | color | color.faint |
 | select | open | border-top-color | color.accent |
-| menu | open | background-color | color.panel |
+| menu | open | background-color | color.raised |
 | menu | open | border-top-color | color.line-strong |
 | menu | open | border-radius | radius.md |
 | menu-item | open | height | row.default |
@@ -1151,7 +1151,7 @@ States: `dragging`, `settling`
 <!-- size-table: sheet -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| sheet | dragging | background-color | color.panel |
+| sheet | dragging | background-color | color.raised |
 | sheet | dragging | border-top-color | color.line-strong |
 | sheet | dragging | border-top-left-radius | radius.md |
 | sheet-handle | dragging | width | space.7 |
@@ -1162,7 +1162,7 @@ States: `dragging`, `settling`
 | sheet-close | dragging | height | touch.sheet-close |
 | sheet-close | dragging | background-color | color.hover |
 | option | dragging | height | 40 |
-| sheet | settling | background-color | color.panel |
+| sheet | settling | background-color | color.raised |
 | sheet-handle | settling | background-color | color.line-strong |
 | sheet-head | settling | height | touch.row |
 
@@ -1181,7 +1181,7 @@ States: `skills`, `filtered`
 <!-- size-table: command-palette -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| palette | skills | background-color | color.panel |
+| palette | skills | background-color | color.raised |
 | palette | skills | border-top-color | color.line-strong |
 | palette | skills | border-radius | radius.md |
 | palette-input | skills | height | control.prominent |
@@ -1225,7 +1225,7 @@ States: `default`, `hover`, `current`, `empty`, `gap`, `phone`
 | trend-chart-point[data-kind=current] | current | fill | color.accent |
 | trend-chart-segment[data-kind=current] | current | stroke | color.accent |
 | trend-chart-crosshair | hover | stroke | color.line-strong |
-| trend-chart-tooltip | hover | background-color | color.panel |
+| trend-chart-tooltip | hover | background-color | color.raised |
 | trend-chart-tooltip | hover | border-top-color | color.line-strong |
 | trend-chart-tooltip | hover | font-size | type.small |
 | trend-chart-empty | empty | color | color.muted |
@@ -1685,7 +1685,7 @@ States: `model`, `effort`, `agent`, `permission`, `long`
 <!-- size-table: picker-menu -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| menu | model | background-color | color.panel |
+| menu | model | background-color | color.raised |
 | menu | model | border-top-color | color.line-strong |
 | menu | model | border-radius | radius.md |
 | menu | model | padding-top | space.1 |
@@ -1699,7 +1699,7 @@ States: `model`, `effort`, `agent`, `permission`, `long`
 | menu-note | model | font-size | type.micro |
 | menu-note | model | color | color.muted |
 | menu-note | model | border-top-color | color.line-soft |
-| menu | permission | background-color | color.panel |
+| menu | permission | background-color | color.raised |
 | menu-item | permission | padding-left | pad.default.x |
 | menu-item[aria-checked=true] | permission | background-color | color.selected |
 | menu-desc | permission | font-size | type.small |
@@ -1739,7 +1739,7 @@ States: `closed`, `open`, `no-effort`, `locked`, `notice`
 |---|---|---|---|
 | mode-button | closed | height | control.default |
 | mode-button | closed | color | color.muted |
-| menu | open | background-color | color.panel |
+| menu | open | background-color | color.raised |
 | menu | open | border-top-color | color.line-strong |
 | menu | open | border-radius | radius.md |
 | menu-label | open | font-size | type.micro |
@@ -2487,7 +2487,7 @@ States: `extension`, `file`, `subagent`, `switcher`, `failed`
 | subagent-task | subagent | background-color | color.selected |
 | subagent-task | subagent | border-radius | radius.md |
 | subagent-task | subagent | font-size | type.prose-small |
-| menu | switcher | background-color | color.panel |
+| menu | switcher | background-color | color.raised |
 | menu-label | switcher | color | color.muted |
 | load-failed-title | failed | color | color.fail |
 
@@ -2804,7 +2804,7 @@ States: `default`, `panel`, `no-match`
 | agent-chip[aria-pressed=true] | default | color | color.ink |
 | agent-more | default | height | control.prominent |
 | agent-more | default | color | color.muted |
-| agent-panel-pop | panel | background-color | color.panel |
+| agent-panel-pop | panel | background-color | color.raised |
 | agent-panel-pop | panel | border-top-color | color.line-strong |
 | agent-panel-pop | panel | border-radius | radius.md |
 | agent-panel-pop | panel | padding-top | space.2 |
@@ -2859,7 +2859,7 @@ States: `default`, `hover`, `menu`
 | quick-actions | default | height | control.default |
 | quick-actions | default | color | color.muted |
 | quick-actions[data-ref-forced=true] | hover | color | color.ink |
-| menu | menu | background-color | color.panel |
+| menu | menu | background-color | color.raised |
 | menu-item | menu | height | row.default |
 
 #### 6.16.28 Agent map
@@ -2990,7 +2990,7 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 | agent-map-dialog | tree | max-width | 1100 |
 | agent-map-dialog | deep | width | 1100 |
 | agent-map-dialog | loading | width | 754 |
-| agent-map-dialog | tree | background-color | color.panel |
+| agent-map-dialog | tree | background-color | color.raised |
 | agent-map-dialog | tree | border-top-color | color.line-strong |
 | agent-map-dialog | tree | border-radius | radius.md |
 | agent-map-head | tree | padding-top | space.2 |
@@ -3151,7 +3151,7 @@ States: `plus`, `slash`, `at`, `empty`, `loading`, `compact`
 <!-- size-table: composer-menu -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| composer-menu | plus | background-color | color.panel |
+| composer-menu | plus | background-color | color.raised |
 | composer-menu | plus | border-top-color | color.line-strong |
 | composer-menu | plus | border-radius | radius.md |
 | composer-menu | plus | padding-top | space.1 |
@@ -3211,7 +3211,7 @@ States: `root`, `folder`, `filtered`, `selected`, `empty`, `loading`, `unsupport
 <!-- size-table: project-file-picker -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| project-file-picker | root | background-color | color.panel |
+| project-file-picker | root | background-color | color.raised |
 | project-file-picker | root | border-top-color | color.line-strong |
 | project-file-picker | root | border-radius | radius.md |
 | project-file-segment | root | height | control.dense |
@@ -4231,7 +4231,7 @@ States: `open`, `level`
 | Part | State | Property | Value |
 |---|---|---|---|
 | drawer | open | width | layout.drawer |
-| drawer | open | background-color | color.panel |
+| drawer | open | background-color | color.raised |
 | nav-row | open | min-height | row.default |
 | drawer | level | width | layout.drawer |
 | drawer-back | level | min-height | row.default |
@@ -4516,7 +4516,7 @@ States: `closed`, `open`, `searching`, `grouped`, `multi`, `disabled-option`, `e
 | principal-picker-label | closed | column-gap | space.1 |
 | principal-picker-label[data-placeholder=true] | closed | color | color.faint |
 | principal-picker | open | border-top-color | color.accent |
-| principal-picker-panel | open | background-color | color.panel |
+| principal-picker-panel | open | background-color | color.raised |
 | principal-picker-panel | open | border-top-color | color.line-strong |
 | principal-picker-panel | open | border-top-left-radius | radius.md |
 | principal-picker-search | open | height | control.dense |
