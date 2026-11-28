@@ -246,6 +246,33 @@ describe("projectFiles on send", () => {
     expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`, `${ROOT}/README.md`]);
   });
 
+  it("a projectFile token: its placeholder in the text, its block led by it, normalized once", async () => {
+    const d = await owned();
+    await connect(d);
+    const conv = await conversation(d);
+    const res = await send(d, conv, {
+      text: "\uFFFC then \uFFFC",
+      tokens: [
+        { type: "projectFile", path: "./src/a.ts" },
+        { type: "projectFile", path: "src/a.ts" },
+      ],
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const [m] = await userMessages(conv);
+    expect(m?.payload.content).toEqual([
+      { type: "text", text: "[project file: src/a.ts] then [project file: src/a.ts]" },
+      {
+        type: "text",
+        text: `[project file: src/a.ts] ${projectFileText("src/a.ts", ROOT)}`,
+      },
+    ]);
+    expect(m?.payload.projectFiles).toEqual([{ path: "src/a.ts" }]);
+    expect(m?.payload.inline?.map((e) => e.ref)).toEqual([
+      { path: "./src/a.ts" },
+      { path: "src/a.ts" },
+    ]);
+  });
+
   it("puts the project file blocks after the @ resources' bodies", async () => {
     const d = await owned();
     await connect(d);

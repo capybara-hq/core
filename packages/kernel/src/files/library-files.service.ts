@@ -907,6 +907,29 @@ export class LibraryFilesService {
   }
 
   /**
+   * The names of the files in `ids` the sender owns and has not deleted (composer inline tokens
+   * spec §3.2: the labels a message's file tokens and uploads get), read-only and outside any
+   * transaction. An id it does not return is refused by {@link attachForMessage} in the message's
+   * transaction, with the codes it gives.
+   */
+  async labelsFor(
+    orgId: string,
+    accountId: string,
+    ids: readonly string[],
+  ): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.db
+      .selectFrom("files")
+      .select(["id", "name"])
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("id", "in", [...new Set(ids)])
+      .where("status", "!=", "deleted")
+      .execute();
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
+  /**
    * Attaches the sender's files to a message, in the message's transaction (rows `FOR UPDATE`, in
    * id order). The caller has already checked that the sender may write to the conversation (this
    * checks only the files' ownership). Returns the content blocks the `user_message` carries

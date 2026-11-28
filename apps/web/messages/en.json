@@ -197,7 +197,13 @@
         "default": "A referenced conversation is no longer available. Remove it and try again.",
         "empty": "A referenced conversation has no messages yet. Remove it and try again."
       },
-      "reference_self": "A conversation can't reference itself. Remove that reference."
+      "reference_self": "A conversation can't reference itself. Remove that reference.",
+      "connector_unavailable": {
+        "default": "A connector in this message can't be used. Remove it and try again.",
+        "not_found": "This connector no longer exists or is turned off",
+        "needs_config": "An admin needs to finish setting it up",
+        "not_offered": "This agent can't use it"
+      }
     },
     "background_task": {
       "not_found": "The background task does not exist or has been cleaned up.",
@@ -237,6 +243,11 @@
       "tool_not_found": "The tool does not exist in this connector.",
       "tool_not_pending": "The tool is not waiting for review.",
       "resources_disabled": "Reading resources is turned off for this connector.",
+      "resource_unreadable": {
+        "default": "A resource in this message has nothing to read. Remove it and try again.",
+        "ui_template": "It is a UI template with nothing to read",
+        "empty": "This resource is empty"
+      },
       "not_personal": "This connector uses one credential for the whole organization, so it has no per-member tool permissions.",
       "git_push_widen_not_allowed": "Loosening the connector's git push policy needs a person on the connector's settings page."
     },

@@ -1,5 +1,8 @@
+import type { ConversationSource } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { AgentLookup } from "../agents/agent-lookup.js";
+import type { AgentDefinition } from "../agents/definition.js";
+import { ApiError } from "../errors.js";
 import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import type { OrgContext } from "../orgs/org.guard.js";
@@ -32,6 +35,18 @@ export interface MentionableConnector {
   credential: "connected" | "missing" | "none";
   toolCount: number;
   resources: boolean;
+}
+
+/** Why a connector named in a message cannot be used (`conversation.connector_unavailable`). */
+export type ConnectorRefusal = "not_found" | "needs_config" | "not_offered";
+
+/** A connector a message names, as the agent's tools offer it now. */
+export interface MentionedConnector {
+  id: string;
+  slug: string;
+  name: string;
+  /** The agent's offered tools of it (at least one). */
+  tools: ResolvedTool[];
 }
 
 /** The tools of `tools` that come from connector `connectorId` (in their order). */
@@ -172,5 +187,93 @@ export class MentionableConnectorsService {
         };
       }),
     };
+  }
+
+  /**
+   * The agent's tools for a message that names connectors or their resources (composer inline
+   * tokens spec §3.4), resolved once as the conversation's next step would resolve them
+   * (`ToolRegistry.forAgent` with the definition's disabled tools and roster, the conversation's
+   * source and its sandbox conversation), and each of `mentioned` with its offered tools. A
+   * connector of which the agent is offered no tool refuses the message: 422
+   * `conversation.connector_unavailable`, `details: [{ connectorId, reason }]`, every refused
+   * connector in `mentioned` order: `not_found` (deleted, disabled, another org's), `needs_config`
+   * (an org admin must configure it, and nothing else keeps it from the agent), `not_offered` (the
+   * agent switches it off, none of its tools is enabled, or its connector extension is not
+   * loaded). A personal credential the sender has not connected is no refusal: the tool call
+   * answers with the connection card. Opens no connector session.
+   */
+  async resolveForMessage(
+    orgId: string,
+    agent: Pick<AgentDefinition, "disabledTools" | "subagents">,
+    where: { source: ConversationSource; sandboxConversationId?: string | undefined },
+    mentioned: readonly string[],
+  ): Promise<{ tools: ResolvedTool[]; toolSearch: boolean; connectors: MentionedConnector[] }> {
+    const disabled = agent.disabledTools ?? [];
+    const resolved = await this.registry.forAgent(orgId, {
+      disabledTools: disabled,
+      subagents: agent.subagents,
+      ...(where.sandboxConversationId !== undefined && {
+        sandboxConversationId: where.sandboxConversationId,
+      }),
+      source: where.source,
+    });
+    const tools = resolved.tools;
+    const toolSearch = resolved.toolSearch === true;
+    if (mentioned.length === 0) return { tools, toolSearch, connectors: [] };
+    const rows = await this.db
+      .selectFrom("connectors")
+      .select(["id", "slug", "name", "connector", "auth"])
+      .where("org_id", "=", orgId)
+      .where("id", "in", [...mentioned])
+      .where("deleted_at", "is", null)
+      .where("status", "=", "active")
+      .execute();
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const connectors: MentionedConnector[] = [];
+    const unoffered: typeof rows = [];
+    const refused = new Map<string, ConnectorRefusal>();
+    for (const id of mentioned) {
+      const row = byId.get(id);
+      if (!row) {
+        refused.set(id, "not_found");
+        continue;
+      }
+      const offered = connectorToolsFor(tools, id);
+      if (offered.length > 0) {
+        connectors.push({ id, slug: row.slug, name: row.name, tools: offered });
+      } else {
+        unoffered.push(row);
+      }
+    }
+    if (unoffered.length > 0) {
+      const setups = await connectorSetups(
+        this.credentials,
+        orgId,
+        unoffered.map((r) => ({ id: r.id, auth: r.auth as unknown as ConnectorAuth })),
+      );
+      for (const r of unoffered) {
+        const switchedOff = disabled.some(
+          (d) => d.kind === "connector" && d.connectorId === r.id && d.tools === "all",
+        );
+        refused.set(
+          r.id,
+          setups.get(r.id) !== "ready" && !switchedOff && this.registry.findConnector(r.connector)
+            ? "needs_config"
+            : "not_offered",
+        );
+      }
+    }
+    if (refused.size > 0) {
+      const details = mentioned.flatMap((connectorId) => {
+        const reason = refused.get(connectorId);
+        return reason === undefined ? [] : [{ connectorId, reason }];
+      });
+      throw new ApiError(
+        "conversation.connector_unavailable",
+        "A connector this message names cannot be used by this agent now; remove it and send again",
+        details,
+      );
+    }
+    return { tools, toolSearch, connectors };
   }
 }

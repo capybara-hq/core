@@ -191,6 +191,26 @@ describe("conversationRefs on send", () => {
     ]);
   });
 
+  it("a conversation token: its placeholder in the text, the block's first line names it", async () => {
+    const m = await member();
+    const ref = await referenced(m, "Pricing [EU]");
+    const conv = await createConv(m.req, orgId, agentId);
+    const res = await send(m.req, conv, {
+      text: "compare with \uFFFC",
+      tokens: [{ type: "conversation", id: ref }],
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const [msg] = await userMessages(conv);
+    expect(textAt(msg, 0)).toBe("compare with [conversation: Pricing (EU)]");
+    const [head, ...rest] = textAt(msg, 1).split("\n");
+    expect(head).toBe("[conversation: Pricing (EU)]");
+    expect(rest.join("\n")).toContain(closing(ref));
+    expect(msg?.payload.conversationRefs?.map((r) => r.id)).toEqual([ref]);
+    expect(msg?.payload.inline).toEqual([
+      { kind: "conversation", start: 13, end: 41, label: "Pricing (EU)", ref: { id: ref } },
+    ]);
+  });
+
   it("with a summary: its text plus only the messages after what it covers, tool-only steps skipped", async () => {
     const m = await member();
     const ref = await createConv(m.req, orgId, agentId);

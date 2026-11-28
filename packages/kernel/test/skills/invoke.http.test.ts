@@ -796,7 +796,8 @@ describe("POST …/messages with skill", () => {
     const res = await send(conv, { text: "9", skill: { name: "fix-issue" }, files: [id] });
     expect(res.statusCode, res.body).toBe(202);
     const [m] = await userMessages(conv);
-    expect(m?.payload.content.map((b) => b.type)).toEqual(["text", "image"]);
+    // the invocation text, then the file's line and its block
+    expect(m?.payload.content.map((b) => b.type)).toEqual(["text", "text", "image"]);
     expect(firstText(m)).toContain("Fix GitHub issue 9");
     await waitForTerminal(db, conv, 1, 30_000);
   });

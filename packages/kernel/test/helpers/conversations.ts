@@ -143,8 +143,11 @@ export function conversationsFor(
     { isAccessible: async () => true },
     d.runs ?? noRuns,
     { resolve: refuse("providers") },
-    { resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments") },
-    { attachForMessage: d.bindFiles ?? refuse("bindFiles") },
+    {
+      resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments"),
+      readResources: refuse("readResources"),
+    },
+    { attachForMessage: d.bindFiles ?? refuse("bindFiles"), labelsFor: async () => new Map() },
     { prepare: invoker ? (a) => invoker.prepare(a) : refuse("invoker") },
     { stopTree: async () => {} },
     // no sandbox provider here: new conversations stay unbound
@@ -161,6 +164,8 @@ export function conversationsFor(
     ceilingWritesOver(h),
     // owed share snapshot deletions are dropped here
     { add: async () => true },
+    // no connectors here: a message naming one refuses
+    { resolveForMessage: refuse("resolveForMessage") },
   );
 }
 
