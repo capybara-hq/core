@@ -256,11 +256,28 @@ export const toolInfoQuery = (orgId: string, id: string, toolKeys: readonly stri
  * The agent's invocable skills for the composer's `/` menu, with the conversation's trial drafts
  * when `conversationId` is the caller's own. A conversation the caller cannot read lists without it.
  */
-export const invocableSkillsQuery = (orgId: string, agentId: string, conversationId?: string) =>
+export const invocableSkillsQuery = (
+  orgId: string,
+  agentId: string,
+  conversationId?: string,
+  /** A new conversation's picked device project: its skills as last read (no conversation yet). */
+  project?: { deviceId: string; name: string },
+) =>
   defineQuery({
-    key: keys.org(orgId).invocableSkills(agentId, conversationId ?? null),
+    key: keys
+      .org(orgId)
+      .invocableSkills(
+        agentId,
+        conversationId ?? null,
+        conversationId === undefined ? (project ?? null) : null,
+      ),
     fn: () =>
-      listInvocableSkills(orgId, agentId, conversationId)
+      listInvocableSkills(
+        orgId,
+        agentId,
+        conversationId,
+        conversationId === undefined ? project : undefined,
+      )
         .catch((e: unknown) => {
           if (
             conversationId !== undefined &&

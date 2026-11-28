@@ -231,6 +231,93 @@ async function latestProjectRoot(
   return row?.payload as ProjectRootPayload | undefined;
 }
 
+/** A conversation's project binding: the device and the project's name and root. */
+export interface ProjectBinding {
+  deviceId: string;
+  name: string;
+  path: string;
+}
+
+/** How many of the caller's bound conversations {@link latestKnownProjectRoot} looks through. */
+const KNOWN_SNAPSHOT_CONVERSATIONS = 20;
+
+/**
+ * The last known snapshot of a project (project skills before the first run, design §3.1): the
+ * newest usable `project_root` among the caller's own chat conversations bound to the same device,
+ * project name and root (each conversation's latest one). What a run of the same person read from
+ * that project; the device is never asked. Undefined when none is known.
+ */
+export async function latestKnownProjectRoot(
+  db: KernelSchemaDb,
+  a: { orgId: string; accountId: string; binding: ProjectBinding },
+): Promise<ProjectRootPayload | undefined> {
+  const rows = await db
+    .selectFrom("conversations as c")
+    .innerJoinLateral(
+      (eb) =>
+        eb
+          .selectFrom("conversation_events as e")
+          .select(["e.payload", "e.created_at"])
+          .whereRef("e.conversation_id", "=", "c.id")
+          .where("e.type", "=", "project_root")
+          .orderBy("e.seq", "desc")
+          .limit(1)
+          .as("p"),
+      (join) => join.onTrue(),
+    )
+    .select("p.payload")
+    .where("c.org_id", "=", a.orgId)
+    .where("c.account_id", "=", a.accountId)
+    .where("c.kind", "=", "chat")
+    .where("c.deleted_at", "is", null)
+    .where("c.device_id", "=", a.binding.deviceId)
+    .where("c.project_name", "=", a.binding.name)
+    .where("c.project_path", "=", a.binding.path)
+    .orderBy("p.created_at", "desc")
+    .limit(KNOWN_SNAPSHOT_CONVERSATIONS)
+    .execute();
+  return rows.map((r) => r.payload as ProjectRootPayload).find((p) => p.unavailable === undefined);
+}
+
+/**
+ * The snapshot a conversation's project skills come from: its own latest `project_root`, or, when
+ * its runs never recorded one, the last known snapshot of its binding among its owner's
+ * conversations ({@link latestKnownProjectRoot}). `own` says which. Undefined when neither exists.
+ */
+export async function projectSnapshotOf(
+  db: KernelSchemaDb,
+  a: { orgId: string; conversationId: string },
+  /** The conversation's own latest `project_root` (default: read with `db`). */
+  ownLatest: () => Promise<ProjectRootPayload | undefined> = () =>
+    latestProjectRoot(db, a.conversationId),
+): Promise<{ payload: ProjectRootPayload; own: boolean } | undefined> {
+  const own = await ownLatest();
+  if (own !== undefined) return { payload: own, own: true };
+  const bound = await bindingOf(db, a);
+  if (bound === undefined) return undefined;
+  const known = await latestKnownProjectRoot(db, { orgId: a.orgId, ...bound });
+  return known === undefined ? undefined : { payload: known, own: false };
+}
+
+/** The conversation's owner and project binding, or undefined for a free conversation. */
+async function bindingOf(
+  db: KernelSchemaDb,
+  a: { orgId: string; conversationId: string },
+): Promise<{ accountId: string; binding: ProjectBinding } | undefined> {
+  const row = await db
+    .selectFrom("conversations")
+    .select(["account_id", "device_id", "project_name", "project_path"])
+    .where("id", "=", a.conversationId)
+    .where("org_id", "=", a.orgId)
+    .executeTakeFirst();
+  if (!row || row.device_id === null || row.project_name === null || row.project_path === null)
+    return undefined;
+  return {
+    accountId: row.account_id,
+    binding: { deviceId: row.device_id, name: row.project_name, path: row.project_path },
+  };
+}
+
 /**
  * Whether the skill a queued invocation recorded is still one a person can invoke in this
  * conversation (phase D Task 9, checked again at dispatch): the same skill (by id) among the
@@ -248,7 +335,8 @@ export async function recordedSkillBlocked(
   },
 ): Promise<NotInvocableReason | null> {
   if (projectSkillOf(a.skillId) !== undefined) {
-    return projectSkillBlocked(await latestProjectRoot(db, a.conversationId), a.skillId);
+    const snapshot = await projectSnapshotOf(db, a);
+    return projectSkillBlocked(snapshot?.payload, a.skillId);
   }
   const found = (await resolveSkills(db, a)).find((r) => r.skill.id === a.skillId);
   if (!found) return "not_found";
@@ -273,6 +361,11 @@ export function projectSkillStub(
   a: { name: string; args: string },
   latest: ProjectRootPayload,
   bare: string,
+  /**
+   * Where `latest` comes from: `run`, this conversation's run start; `known`, the last known
+   * snapshot of the project from another conversation (no run of this one read it yet).
+   */
+  from: "run" | "known" = "run",
 ): RenderedInvocation {
   const skill = latest.skills.find((s) => s.name === bare);
   if (skill === undefined) throw notInvocable("not_found", a.name);
@@ -291,7 +384,7 @@ export function projectSkillStub(
   const text = escapeSkillInvocationTags(
     [
       `The user invoked the project skill "${a.name}" with /${a.name}${args === "" ? "" : ` ${args}`}.`,
-      `Its instructions are not included in this message: call ${BUILTIN.Skill} with the name "${a.name}" to load them from the project (its directory is ${dir}; the SKILL.md recorded at the run start has the digest ${skill.digest}), then follow them${args === "" ? "." : " with the user's arguments:"}`,
+      `Its instructions are not included in this message: call ${BUILTIN.Skill} with the name "${a.name}" to load them from the project (its directory is ${dir}; the SKILL.md ${from === "run" ? "recorded at the run start" : "last recorded for this project"} has the digest ${skill.digest}), then follow them${args === "" ? "." : " with the user's arguments:"}`,
       ...(args === "" ? [] : [args]),
     ].join("\n\n"),
   );
@@ -339,6 +432,11 @@ export class SkillInvoker {
     agentId: string,
     accountId: string,
     conversationId?: string,
+    /**
+     * Without `conversationId`: the new conversation's picked device project (design §3.2), whose
+     * last known snapshot adds the project's skills.
+     */
+    pick?: { deviceId: string; project: string },
   ): Promise<InvocableSkill[]> {
     const agent = await this.agents.get(orgId, agentId, accountId);
     if (conversationId !== undefined) {
@@ -359,11 +457,32 @@ export class SkillInvoker {
       agent: agent.definition,
       ...(conversationId !== undefined && { conversationId }),
     });
-    if (conversationId === undefined) return skills;
     // a project skill is loaded by the agent's Skill tool: none without it
     if (!hasBuiltin(agent.definition, BUILTIN.Skill)) return skills;
-    const latest = await this.eventLog.latestOfType(conversationId, "project_root");
-    return [...skills, ...projectInvocables(latest?.payload)];
+    if (conversationId !== undefined) {
+      const snapshot = await this.conversationSnapshot(orgId, conversationId);
+      return [...skills, ...projectInvocables(snapshot?.payload)];
+    }
+    if (pick === undefined) return skills;
+    const binding = await this.pickedBinding(pick.deviceId, pick.project);
+    if (binding === undefined) return skills;
+    const known = await latestKnownProjectRoot(this.db.db, { orgId, accountId, binding });
+    return [...skills, ...projectInvocables(known)];
+  }
+
+  /**
+   * The device project a new conversation picked, by device and name, or undefined when the device
+   * has no project of that name. Only its last known snapshot among the caller's own conversations
+   * is used, so nothing of someone else's device can be read through it.
+   */
+  private async pickedBinding(deviceId: string, name: string): Promise<ProjectBinding | undefined> {
+    const row = await this.db.db
+      .selectFrom("device_projects")
+      .select("path")
+      .where("device_id", "=", deviceId)
+      .where("name", "=", name)
+      .executeTakeFirst();
+    return row === undefined ? undefined : { deviceId, name, path: row.path };
   }
 
   /**
@@ -416,6 +535,11 @@ export class SkillInvoker {
      * names the skill's directory ({@link knownSkillsRoot}). Null or absent: `/skills`.
      */
     deviceId?: string | null;
+    /**
+     * The first message of a conversation not created yet: the project it is created bound to, as
+     * the creation resolves it (its last known snapshot renders a project skill, design §3.3).
+     */
+    project?: { name: string; path: string };
     agent: AgentDefinition;
     name: string;
     args: string;
@@ -495,15 +619,16 @@ export class SkillInvoker {
       orgId: string;
       accountId: string;
       conversationId?: string;
+      deviceId?: string | null;
+      project?: { name: string; path: string };
       agent: AgentDefinition;
       name: string;
       args: string;
     },
     bare: string,
   ): Promise<RenderedInvocation> {
-    const { conversationId } = a;
-    if (conversationId === undefined) throw notInvocable("not_found", a.name);
-    const latest = (await this.eventLog.latestOfType(conversationId, "project_root"))?.payload;
+    const snapshot = await this.projectSnapshot(a);
+    const latest = snapshot?.payload;
     if (latest?.unavailable !== undefined) {
       throw projectUnavailable(
         latest.unavailable.reason,
@@ -519,7 +644,42 @@ export class SkillInvoker {
         "skill_tool_off",
         `Skill "${a.name}" cannot be invoked: this agent cannot load project skills; turn on its ${BUILTIN.Skill} tool`,
       );
-    return projectSkillStub(a, latest, bare);
+    return projectSkillStub(a, latest, bare, snapshot?.own === false ? "known" : "run");
+  }
+
+  /** {@link projectSnapshotOf}, the conversation's own latest read through the event log. */
+  private conversationSnapshot(
+    orgId: string,
+    conversationId: string,
+  ): Promise<{ payload: ProjectRootPayload; own: boolean } | undefined> {
+    return projectSnapshotOf(
+      this.db.db,
+      { orgId, conversationId },
+      async () => (await this.eventLog.latestOfType(conversationId, "project_root"))?.payload,
+    );
+  }
+
+  /**
+   * Where a send's project skill is rendered from (design §3.3): the conversation's own latest
+   * `project_root`, else the last known snapshot of its binding; for a conversation not created
+   * yet, the last known snapshot of the project it is created bound to.
+   */
+  private async projectSnapshot(a: {
+    orgId: string;
+    accountId: string;
+    conversationId?: string;
+    deviceId?: string | null;
+    project?: { name: string; path: string };
+  }): Promise<{ payload: ProjectRootPayload; own: boolean } | undefined> {
+    if (a.conversationId !== undefined) return this.conversationSnapshot(a.orgId, a.conversationId);
+    if (a.project === undefined || a.deviceId === undefined || a.deviceId === null)
+      return undefined;
+    const known = await latestKnownProjectRoot(this.db.db, {
+      orgId: a.orgId,
+      accountId: a.accountId,
+      binding: { deviceId: a.deviceId, ...a.project },
+    });
+    return known === undefined ? undefined : { payload: known, own: false };
   }
 
   /**

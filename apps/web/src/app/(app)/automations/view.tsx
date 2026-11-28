@@ -4,6 +4,7 @@ import { type Column, DataTable, ListPage, useToast } from "@capybara-hq/design"
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { AcceptanceRulesSheet, useAcceptanceRules } from "../../../components/AcceptanceRulesSheet";
 import { AutomationCalendarView } from "../../../components/AutomationCalendarView";
 import {
   type AutomationColumnKey,
@@ -38,7 +39,8 @@ import NotFound from "../not-found";
  * (`components/AutomationCalendarView`). Members up (guests can't create tasks: the no-access
  * state). From the query cache (the layout prefetched the list, the agents and, for a remembered
  * calendar, its range on a first load). `initial` is the view `page.tsx` read from the address and
- * the `cap_automations_view` cookie.
+ * the `cap_automations_view` cookie. When a source directs events to me, the head's Acceptance rules action opens
+ * my acceptance rules in a Sheet over either view (`?rules=1`, `AcceptanceRulesSheet`).
  */
 export default function AutomationsView({ initial }: { initial: AutomationsUrl }) {
   const ws = useWorkspace({ min: "member" });
@@ -67,16 +69,30 @@ function Automations({
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("automations");
+  const tr = useTranslations("acceptance");
   const [url, setUrl] = useAutomationsUrl(initial);
   const list = usePageQuery(automationsQuery(orgId));
   const settingsQ = orgSettingsQuery(orgId);
   const off =
     useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) }).data?.settings
       .automations.enabled === false;
+  // Only when a source directs events to me: the rules sheet's entry.
+  const directed = (useAcceptanceRules(orgId).data?.items.length ?? 0) > 0;
   const header = {
     path: [...scope, { label: "automations" }],
     title: t("title"),
-    actions: [{ label: t("new"), variant: "primary" as const, href: "/automations/new" }],
+    actions: [
+      ...(directed
+        ? [
+            {
+              label: tr("title"),
+              variant: "default" as const,
+              onSelect: () => setUrl({ ...url, rules: true }),
+            },
+          ]
+        : []),
+      { label: t("new"), variant: "primary" as const, href: "/automations/new" },
+    ],
     tabs: [
       {
         id: "calendar",
@@ -90,21 +106,36 @@ function Automations({
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const tasks = list.kind === "ready" ? list.data.items : null;
+  const sheet = (
+    <AcceptanceRulesSheet
+      orgId={orgId}
+      open={url.rules}
+      onOpenChange={(open) => setUrl({ ...url, rules: open })}
+    />
+  );
   if (url.view === "calendar") {
     return (
-      <AutomationCalendarView
-        orgId={orgId}
-        accountId={accountId}
-        admin={admin}
-        url={url}
-        setUrl={setUrl}
-        header={header}
-        tasks={tasks}
-        off={off}
-      />
+      <>
+        <AutomationCalendarView
+          orgId={orgId}
+          accountId={accountId}
+          admin={admin}
+          url={url}
+          setUrl={setUrl}
+          header={header}
+          tasks={tasks}
+          off={off}
+        />
+        {sheet}
+      </>
     );
   }
-  return <AutomationList orgId={orgId} header={header} tasks={tasks} off={off} />;
+  return (
+    <>
+      <AutomationList orgId={orgId} header={header} tasks={tasks} off={off} />
+      {sheet}
+    </>
+  );
 }
 
 /** Compact rows (below 600): the name leads, the next run under it, the state at the end. */

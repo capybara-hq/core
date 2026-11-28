@@ -2872,7 +2872,6 @@
       "shares": "分享",
       "myShares": "我的分享",
       "notifications": "通知",
-      "acceptWork": "接受工作",
       "navigation": "导航"
     },
     "empty": "没有需要你个人凭据的连接器。",
@@ -7206,8 +7205,8 @@
       "deleteDescription": "任务会停止并被移除，它创建的会话会保留。",
       "deleteConfirm": "删除「{name}」？",
       "deleteConfirmBody": "任务会停止并被移除，它创建的会话会保留。",
-      "deleteAcceptanceBody": "删除不会停止接收工作：只要你对其来源的规则是「立即运行」，下一项指派给你的工作会重新创建它。",
-      "deleteAcceptanceLink": "修改你的接受规则",
+      "deleteAcceptanceBody": "删除不会停止接收：只要你对其来源的规则是「立即运行」，下一个指向你的事件会重新创建它。",
+      "deleteAcceptanceLink": "修改接收规则",
       "created": "自动化已创建",
       "saved": "自动化已保存",
       "started": "已开始运行",
@@ -7299,7 +7298,8 @@
         "retry": "重试"
       }
     },
-    "acceptsWork": "接受来自 {source} 的工作"
+    "acceptsWork": "接收来自{source}的事件",
+    "acceptanceTag": "接收规则"
   },
   "navSettings": {
     "title": "导航",
@@ -7558,21 +7558,19 @@
     }
   },
   "acceptance": {
-    "title": "接受工作",
-    "description": "本组织中的来源把工作指派给你和你的某个智能体时，会发生什么。",
-    "section": "会指派工作的来源",
-    "sectionHint": "为每个来源分别选择。工作始终以你的身份、由你的智能体、在你批准的工具范围内运行。",
-    "empty": "本组织中没有会指派工作的来源。",
+    "title": "接收规则",
+    "description": "某个来源把事件指向你和你的某个智能体时，怎么处理。始终以你的身份、由你的智能体、在你批准的工具范围内运行。",
+    "empty": "目前没有会把事件指向你的来源。",
     "saved": "已保存",
     "mode": {
       "default": "组织默认（{mode}）",
       "defaultHint": "跟随组织的选择，组织修改时一并变化。",
       "auto": "立即运行",
-      "autoHint": "你的智能体通过你为 {source} 准备的自动化立即开始工作，超出预先批准的工具时先询问你。",
+      "autoHint": "你的智能体立即处理来自{source}的事件，超出预先批准的工具时先询问你。",
       "confirm": "先询问我",
-      "confirmHint": "来自 {source} 的工作在你的收件箱中等待，直到你接受或拒绝。",
+      "confirmHint": "来自{source}的事件在收件箱中等你接受或拒绝。",
       "off": "从不",
-      "offHint": "不运行任何内容；{source} 会显示该工作未被接受。"
+      "offHint": "不运行任何内容；{source}会显示未被接受。"
     }
   }
 }

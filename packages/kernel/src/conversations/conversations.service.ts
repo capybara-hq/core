@@ -30,6 +30,7 @@ import {
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { projectSkillOf } from "../runtime/context/project-root.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { RunDeletion } from "../runtime/run-deletion.js";
@@ -824,10 +825,12 @@ export class ConversationsService {
     if (prior) return prior;
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
-    // the project its files are checked in, read before the write (the binding inside it decides)
+    // the project its files are checked in, or its project skill is rendered from, read before the
+    // write (the binding inside it decides)
     const project =
       (input.projectFiles?.length ?? 0) > 0 ||
-      input.tokens?.some((t) => t.type === "projectFile") === true
+      input.tokens?.some((t) => t.type === "projectFile") === true ||
+      (input.skill !== undefined && projectSkillOf(input.skill.name) !== undefined)
         ? await this.bindingFor(orgId, accountId, deviceId, pick.project)
         : undefined;
     const extra = await this.resolveExtra(
@@ -844,7 +847,7 @@ export class ConversationsService {
       orgId,
       accountId,
       agentId,
-      { conversationId: undefined, deviceId },
+      { conversationId: undefined, deviceId, ...(project !== undefined && { project }) },
       agent.definition,
       { ...(input.skill !== undefined && { skill: input.skill }), text: extra.text ?? input.text },
     );
@@ -2121,18 +2124,26 @@ export class ConversationsService {
     orgId: string,
     accountId: string,
     agentId: string,
-    /** The conversation (absent before it is created) and its device (its skills root). */
-    where: { conversationId: string | undefined; deviceId: string | null },
+    /**
+     * The conversation (absent before it is created), its device (its skills root) and, before it
+     * is created, the project it is created bound to.
+     */
+    where: {
+      conversationId: string | undefined;
+      deviceId: string | null;
+      project?: { name: string; path: string };
+    },
     agent: AgentDefinition,
     input: Pick<UserMessageInput, "skill" | "text">,
   ): Promise<RenderedInvocation | undefined> {
     if (input.skill === undefined) return undefined;
-    const { conversationId, deviceId } = where;
+    const { conversationId, deviceId, project } = where;
     return this.invoker.prepare({
       orgId,
       agentId,
       accountId,
       ...(conversationId !== undefined && { conversationId }),
+      ...(project !== undefined && { project }),
       deviceId,
       agent,
       name: input.skill.name,
