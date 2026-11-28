@@ -242,16 +242,19 @@ export class IdleCompactionJob {
     if (outcome !== undefined || !definition) return outcome ?? "no_model";
 
     // checks 8 and 9 (S13): the compaction's dry run (reads every event and the media: last)
-    const probe = await this.compactions.probeIdle({
-      orgId,
-      conversationId,
-      agentId: conv.agent_id,
-      agent: definition,
-      agentVersion: agent.current_version,
-      source: conv.source as ConversationSource,
-      conversationKind: "chat",
-      absorbedUpToSeq: Number(conv.consumed_seq),
-    });
+    const probe = await this.compactions.probeIdle(
+      {
+        orgId,
+        conversationId,
+        agentId: conv.agent_id,
+        agent: definition,
+        agentVersion: agent.current_version,
+        source: conv.source as ConversationSource,
+        conversationKind: "chat",
+        absorbedUpToSeq: Number(conv.consumed_seq),
+      },
+      "cache",
+    );
     // an unavailable model or storage during the dry run: nothing to compact with now
     known.probe = probe;
     known.inContext = probe?.inContext ?? false;

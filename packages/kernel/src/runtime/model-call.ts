@@ -19,13 +19,14 @@ import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { IdleMode, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { CaseSnapshot } from "../evals/snapshot.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hasInvocation, skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
+import { type CompactionModelPort, chooseSummarizer, type Summarizer } from "./compaction-model.js";
 import type { CompactionProgress, CompactionProgressSink } from "./compaction-progress.js";
 import type {
   CompactionSettings,
@@ -249,6 +250,13 @@ export interface ModelStepDeps {
    * Absent in eval replays and single-step replays, which have no live conversation to show it on.
    */
   compactionProgress?: CompactionProgressSink;
+  /**
+   * The org's `compaction` purpose (compaction model spec §4.2): read once per compaction, after
+   * the trigger passed and a plan exists. Absent = unmapped (test stubs, single-step replays): every
+   * compaction summarizes on the conversation model by today's rules. Live runs get it
+   * (`RunSteps`); full-run replays inherit it and resolve C through their billed registry.
+   */
+  compactionModel?: CompactionModelPort;
   /** The kernel logger (its `debug` level is optional here: SDK loggers have none). */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
   /**
@@ -1312,11 +1320,15 @@ export interface CompactOptions {
    */
   transcriptOnly?: boolean;
   /**
-   * The idle compact run (idle compaction spec §4.3 check 9): an in-context skip ends the
-   * compaction with nothing written; never the transcript request. Implies nothing about `manual`
-   * (ruling R13: a manual compaction is transcript-only, so the idle run never sets it).
+   * The idle compact run's mode (idle compaction spec §4.3 check 9, compaction model spec §6.3).
+   * `cache`: an in-context skip ends the compaction with nothing written; never the transcript
+   * request (a compaction model mapped since arming skips the in-context build, so it writes
+   * nothing either: spec issue C3). `compaction_model`: the summarizer must be the compaction
+   * model, else the compaction ends with nothing written (`no_compaction_model`); never V. Implies
+   * nothing about `manual` (ruling R13: a manual compaction is transcript-only, so the idle run
+   * never sets it).
    */
-  requireInContext?: boolean;
+  idle?: IdleMode;
 }
 
 /** What one compaction execution wrote: the events, the summary's seq and whether it failed. */
@@ -1358,7 +1370,12 @@ export type InContextFallback =
    * Input the model has not answered follows the last reply (ruling R9, {@link
    * unansweredAfterReply}): a tool result, or an absorbed message other than a run opener.
    */
-  | "pending_input";
+  | "pending_input"
+  /**
+   * A configured, usable, eligible compaction model summarizes instead (compaction model spec
+   * §4.4, decision Q2): always the transcript.
+   */
+  | "compaction_model";
 
 /** The in-context summary call of one compaction. */
 export interface InContextSummary {
@@ -1498,20 +1515,25 @@ async function inContextSummary(
  * compaction spec §4.3 checks 8 and 9).
  */
 export interface PreparedCompaction {
-  provider: BoundProvider;
+  /** The conversation model V: what the next request is built for (`opts.ref` or the agent's). */
   info: ModelInfo;
-  /** The model the compaction summarizes with (`opts.ref` or the agent's main model). */
+  /** V's ref (`opts.ref` or the agent's main model): the estimate, the plan and the fit use it. */
   ref: ModelRef;
+  /**
+   * Who writes the summary (compaction model spec §3): the compaction model C, or V. The call
+   * part uses only it (request, hooks, usage, stream, chunk budget).
+   */
+  summarizer: Summarizer;
   /** The calibrated estimate of the next step's request (what the trigger compares). */
   estimate: number;
-  /** The model's context window. */
+  /** V's context window. */
   window: number;
   /** The estimated tokens of the plan's transcript: what no summary covers yet. */
   growthTokens: number;
   plan: { coversUpToSeq: number; transcript: string };
   /** Whether the manual rule planned it (`opts.manual`). */
   manual: boolean;
-  /** The summary call's output cap (context compaction spec §4.8). */
+  /** The summary call's output cap (context compaction spec §4.8): `summarizer.cap`. */
   summaryCap: number;
   /** The in-context summary request, or why the compaction would summarize the transcript. */
   inContext: InContextSummary | { skip: InContextFallback };
@@ -1526,15 +1548,23 @@ export type CompactionPrepareSkip =
   /** Nothing precedes the kept tail. */
   | { skipped: "no_plan"; estimate: number; window: number }
   /** The model or the attachment storage cannot be reached right now. */
-  | { skipped: "unavailable"; reason: string };
+  | { skipped: "unavailable"; reason: string }
+  /**
+   * `opts.idle === "compaction_model"` and the summarizer is not the compaction model (unmapped,
+   * unavailable or too small now): the idle run never falls back to V (compaction model spec §6.3).
+   */
+  | { skipped: "no_compaction_model" };
 
 /**
  * The preparation of one compaction (idle compaction spec §4.3): resolve the model, load the media,
  * build the next step's request and calibrate its estimate, apply the trigger and the backoff (unless
- * `opts.force`), plan, and build the in-context summary request ({@link inContextSummary}). It writes
- * nothing and sends no model call; the outcomes a manual compaction records (`compaction_skipped`,
- * `compaction_failed` for an unavailable model) are {@link runCompaction}'s. `hooks.planned` runs once
- * the plan exists, before the in-context build reads the live snapshot.
+ * `opts.force`), plan, choose the summarizer ({@link chooseSummarizer}: the org's compaction model
+ * when it is usable and eligible, else V), and build the in-context summary request
+ * ({@link inContextSummary}; skipped when the compaction model summarizes). It writes nothing and
+ * sends no model call; the outcomes a manual compaction records (`compaction_skipped`,
+ * `compaction_failed` for an unavailable model) are {@link runCompaction}'s. `hooks.planned` runs
+ * once the summarizer is chosen (an idle run in compaction-model mode without one ends before it),
+ * before the in-context build reads the live snapshot.
  */
 export async function prepareCompaction(
   deps: ModelStepDeps,
@@ -1608,28 +1638,43 @@ export async function prepareCompaction(
       })
     : compactionPlan(events, compaction, tailBudget);
   if (!plan) return { skipped: "no_plan", estimate, window: info.contextWindow };
+  // compaction model spec §4.2: the purpose is read only now (the trigger passed, a plan exists),
+  // so a step that does not compact pays nothing; the plan above is V's either way
+  const { summarizer } = await chooseSummarizer(
+    deps,
+    input.orgId,
+    { ref: modelRef, provider, info },
+    compaction,
+  );
+  if (opts.idle === "compaction_model" && summarizer.source !== "compaction_model") {
+    return { skipped: "no_compaction_model" };
+  }
   hooks.planned?.();
-  // the summary call's output cap: the org's effective setting, never above the model's own cap
-  // (context compaction spec §4.8)
-  const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
+  // the summary call's output cap: the org's effective setting, never above V's own cap nor, on
+  // the compaction model, above its cap (context compaction spec §4.8, compaction model spec §5.1)
+  const summaryCap = summarizer.cap;
   // idle compaction spec §9.4: an automatic compaction tries the summary from the conversation's
   // last request first (its cached prefix); a skip (always for a manual one, ruling R13)
-  // summarizes the transcript exactly as before, or ends an idle one (`requireInContext`)
-  const inContext = await inContextSummary(
-    deps,
-    input,
-    events,
-    modelRef,
-    info,
-    tools,
-    { reserveTokens: compaction.reserveTokens, summaryCap },
-    plan,
-    opts,
-  );
+  // summarizes the transcript exactly as before, or ends a cache-mode idle one. A compaction
+  // model always summarizes the transcript (compaction model spec §4.4, Q2).
+  const inContext: InContextSummary | { skip: InContextFallback } =
+    summarizer.source === "compaction_model"
+      ? { skip: "compaction_model" }
+      : await inContextSummary(
+          deps,
+          input,
+          events,
+          modelRef,
+          info,
+          tools,
+          { reserveTokens: compaction.reserveTokens, summaryCap },
+          plan,
+          opts,
+        );
   return {
-    provider,
     info,
     ref: modelRef,
+    summarizer,
     estimate,
     window: info.contextWindow,
     growthTokens: textTokens(plan.transcript),
@@ -1651,8 +1696,12 @@ export async function prepareCompaction(
  *
  * `opts.force` (the reactive path, spec §4.4, and a manual compact run, spec §4.7) bypasses the
  * trigger, `enabled` and the backoff, and `opts.ref` makes it summarise with the rung's model rather
- * than the agent's main model. `opts.requireInContext` (the idle compact run, idle compaction spec
- * §4.3) ends the compaction with nothing written when the in-context summary does not apply.
+ * than the agent's main model. `opts.idle` (the idle compact run, idle compaction spec §4.3)
+ * ends the compaction with nothing written when its summarizer does not apply: the in-context
+ * summary in `cache` mode, the compaction model in `compaction_model` mode. The summary calls go
+ * to the prepared summarizer (compaction model spec §3): the org's compaction model when one is
+ * usable and eligible, else the conversation model; a failed or denied call on it is never
+ * retried on the other (decision Q1).
  *
  * The one execution every path runs: the automatic step path through {@link maybeCompact} and a
  * compact run (manual or idle) through `CompactionService.force`. The preparation is
@@ -1699,8 +1748,9 @@ export async function runCompaction(
     return { events: merged, summarySeq: null, failed: true };
   };
   // §4.6 progress: from the plan on the compaction is certain, so the conversation may show a row.
-  // It is display-only (Redis + a bus message, never the log); a lost update costs nothing. An idle
-  // compaction is certain only once its in-context request exists, so it shows the row after it.
+  // It is display-only (Redis + a bus message, never the log); a lost update costs nothing. A
+  // cache-mode idle compaction is certain only once its in-context request exists, so it shows the
+  // row after it; a compaction-model one once its summarizer is chosen (the planned hook).
   let startedAt = 0;
   const progressOf = (progress: CompactionProgress): void => {
     deps.compactionProgress?.update({
@@ -1716,11 +1766,13 @@ export async function runCompaction(
   };
   const prepared = await prepareCompaction(deps, input, events, runtime, compaction, tools, opts, {
     planned: () => {
-      if (opts.requireInContext !== true) preparing();
+      if (opts.idle !== "cache") preparing();
     },
   });
   if ("skipped" in prepared) {
     if (prepared.skipped === "unavailable") return unavailable(prepared.reason);
+    // an idle run in compaction-model mode without the compaction model: nothing written
+    if (prepared.skipped === "no_compaction_model") return skipped(events);
     if (prepared.skipped !== "no_plan" || opts.manual !== true) return skipped(events);
     // a manual compaction that finds nothing to summarize says so (display only, never
     // model-visible): nothing precedes the kept tail
@@ -1742,8 +1794,9 @@ export async function runCompaction(
       failed: false,
     };
   }
-  const { provider, info, plan, manual, summaryCap, inContext } = prepared;
-  const modelRef = prepared.ref;
+  // the call part uses only the summarizer: the plan above was V's (compaction model spec §5.1)
+  const { summarizer, plan, manual, summaryCap, inContext } = prepared;
+  const { provider, info } = summarizer;
   const ic = "skip" in inContext ? null : inContext;
   if ("skip" in inContext) {
     deps.log.debug?.("in-context summary skipped", {
@@ -1751,15 +1804,17 @@ export async function runCompaction(
       conversationId: input.conversationId,
       reason: inContext.skip,
     });
-    // the idle compact run never falls back to the transcript request (idle compaction spec
-    // §4.3 check 9): it ends with nothing written
-    if (opts.requireInContext === true) return skipped(events);
-  } else if (opts.requireInContext === true) {
+    // the cache-mode idle compact run never falls back to the transcript request (idle compaction
+    // spec §4.3 check 9): it ends with nothing written
+    if (opts.idle === "cache") return skipped(events);
+  } else if (opts.idle === "cache") {
     preparing();
   }
 
   const { runId, step, signal, conversationId } = input;
-  const ref = modelRef;
+  const ref = summarizer.ref;
+  /** The model a summary or a failed call names (compaction model spec §7.1; not model-visible). */
+  const writtenBy = { provider: ref.provider, model: ref.model };
   // review M6: the preparation awaited the snapshot read; an abort meanwhile sends no call
   if (signal.aborted) {
     deps.compactionProgress?.clear(runId);
@@ -1877,7 +1932,10 @@ export async function runCompaction(
           ? retry
             ? ic.retryRequest
             : ic.request
-          : buildCompactionRequest(callInput, info.id, summaryCap, { retry });
+          : buildCompactionRequest(callInput, info.id, summaryCap, {
+              retry,
+              params: summarizer.params,
+            });
       if (hookBase && deps.hooks?.has("model.request")) {
         let verdict: Awaited<ReturnType<HookRunner["run"]>>;
         try {
@@ -2060,6 +2118,7 @@ export async function runCompaction(
         attempt: attemptNo,
         step,
         reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})${chunkNote(multiChunk ? denial.chunk : null)}`,
+        model: writtenBy,
       },
     };
     deps.log.warn("compaction blocked by a policy hook", {
@@ -2111,13 +2170,19 @@ export async function runCompaction(
             savedTokens: summarySavedTokens(savedFrom, summary),
             method: ic !== null ? "in_context" : "transcript",
             step,
+            model: writtenBy,
           },
         }
       : {
           type: "compaction_failed",
           runId,
           idemKey: idem.compactionFailed(runId, step, ordinal),
-          payload: { attempt: attemptNo, step, reason: `${failure}${chunkNote(failedChunk)}` },
+          payload: {
+            attempt: attemptNo,
+            step,
+            reason: `${failure}${chunkNote(failedChunk)}`,
+            model: writtenBy,
+          },
         };
   // the compaction calls' usage (I-1): logged with the outcome in one append (one transaction),
   // marked `purpose: "compaction"` so step consumers (calibration, trajectory steps, replay plans)

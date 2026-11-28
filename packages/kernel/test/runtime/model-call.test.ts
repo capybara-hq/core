@@ -19,17 +19,21 @@ import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.j
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import type { IdleMode, KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ApiError } from "../../src/errors.js";
 import { liveSnapshot } from "../../src/evals/snapshot.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
+import { compactionModelPort } from "../../src/runtime/compaction-model.js";
 import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
 import type { MediaBytes, MediaInfo } from "../../src/runtime/context/build.js";
 import {
+  buildCompactionRequest,
   compactionPlan,
   compactionRequestOverhead,
   compactionRetryNote,
+  openingSeqs,
   summarySavedTokens,
 } from "../../src/runtime/context/compaction.js";
 import { inContextInstruction } from "../../src/runtime/context/in-context-compaction.js";
@@ -158,6 +162,9 @@ beforeAll(async () => {
           { id: "fake-think", streamIdleTimeoutMs: 5000 },
           { id: "fake-small", contextWindow: 2000 },
           { id: "fake-nocache", cache: "none" },
+          // compaction model cases: a summarizer with a large window, and one too small (§4.3)
+          { id: "fake-c", contextWindow: 200_000 },
+          { id: "fake-c32", contextWindow: 32_000 },
         ],
       },
     },
@@ -2066,6 +2073,8 @@ describe("runModelStep", () => {
         skips: string[];
         /** The messages of the `warn` lines with `context=Compaction`. */
         warns: string[];
+        /** Every `context=Compaction` line: level, message and reason. */
+        lines: { level: string; msg: string; reason?: string }[];
         d: ModelStepDeps;
       }
 
@@ -2080,11 +2089,18 @@ describe("runModelStep", () => {
           hooks?: ModelStepDeps["hooks"];
           /** Runs before the live snapshot is read; a throw fails the snapshot. */
           beforeSnapshot?: () => void;
+          /** The compaction model port (absent: unmapped). */
+          compactionModel?: ModelStepDeps["compactionModel"];
+          /** A configured model name whose `registry.resolve` throws. */
+          resolveFails?: string;
+          /** A model id whose every summary call fails with a scripted error. */
+          failModel?: string;
         } = {},
       ) => {
         const sent: ModelRequest[] = [];
         const skips: string[] = [];
         const warns: string[] = [];
+        const lines: Harness["lines"] = [];
         let overflowed = false;
         const log = createLogger("debug", {
           write: (line) => {
@@ -2100,6 +2116,15 @@ describe("runModelStep", () => {
             if ((rec.level === "warn" || rec.level === 40) && rec.context === "Compaction") {
               warns.push(rec.msg ?? "");
             }
+            if (rec.context === "Compaction") {
+              const level =
+                rec.level === 40 ? "warn" : rec.level === 20 ? "debug" : String(rec.level);
+              lines.push({
+                level,
+                msg: rec.msg ?? "",
+                ...(rec.reason !== undefined && { reason: rec.reason }),
+              });
+            }
           },
         });
         const d: ModelStepDeps = {
@@ -2110,12 +2135,16 @@ describe("runModelStep", () => {
           },
           log,
           ...(opts.hooks !== undefined && { hooks: opts.hooks }),
+          ...(opts.compactionModel !== undefined && { compactionModel: opts.compactionModel }),
           liveSnapshot: async (o, c, r, a, events) => {
             opts.beforeSnapshot?.();
             return liveSnapshot(db, { orgId: o, conversationId: c, runId: r, agentId: a, events });
           },
           registry: {
             resolve: async (...args: Parameters<ModelStepDeps["registry"]["resolve"]>) => {
+              if (opts.resolveFails !== undefined && args[1].model === opts.resolveFails) {
+                throw new Error("the provider's model list failed");
+              }
               const got = await deps.registry.resolve(...args);
               return {
                 ...got,
@@ -2123,6 +2152,12 @@ describe("runModelStep", () => {
                   ...got.provider,
                   stream(req, o) {
                     sent.push(structuredClone(req));
+                    if (req.purpose === "compaction" && req.model === opts.failModel) {
+                      // biome-ignore lint/correctness/useYield: fails before the first event
+                      return (async function* (): AsyncGenerator<ModelStreamEvent> {
+                        throw new ModelError("invalid_request", "Scripted summarizer failure");
+                      })();
+                    }
                     if (
                       opts.overflowOnce !== undefined &&
                       !overflowed &&
@@ -2142,7 +2177,7 @@ describe("runModelStep", () => {
             },
           },
         };
-        return { sent, skips, warns, d } satisfies Harness;
+        return { sent, skips, warns, lines, d } satisfies Harness;
       };
 
       /** The latest seq in the log below `seq`. */
@@ -2217,6 +2252,19 @@ describe("runModelStep", () => {
 
       /** A low threshold: the next step compacts proactively. */
       const compactNext = { threshold: 0.01 };
+      /** The compaction model of these cases. */
+      const cRef = { provider: "model-fake", model: "fake-c" };
+      /** A compaction model port mapped to model-fake's `model` (null: unmapped); records org ids. */
+      const portTo = (model: string | null, params: Record<string, string | number> = {}) => {
+        const calls: string[] = [];
+        return {
+          calls,
+          target: async (o: string) => {
+            calls.push(o);
+            return model === null ? null : { model: { provider: "model-fake", model }, params };
+          },
+        };
+      };
       const compactionUsage = async () =>
         (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
       const lastBlock = (req: ModelRequest | undefined) => {
@@ -2507,7 +2555,12 @@ describe("runModelStep", () => {
         await withSettings(compactNext, async () => {
           await icStep(h.d, 1);
           expect((await ofType("compaction_failed")).map((f) => f.payload)).toEqual([
-            { attempt: 1, step: 1, reason: "Scripted invalid_request failure" },
+            {
+              attempt: 1,
+              step: 1,
+              reason: "Scripted invalid_request failure",
+              model: { provider: "model-fake", model: "fake-1" },
+            },
           ]);
           // attempt 1 failed: the backoff waits for two new user turns
           await nextTurn("echo:third");
@@ -2548,10 +2601,10 @@ describe("runModelStep", () => {
         expect(h.sent.filter((r) => r.purpose === "compaction")).toEqual([]);
       });
 
-      describe("requireInContext: the idle compact run (idle compaction spec §4.3 check 9)", () => {
+      describe("idle: the idle compact run (idle compaction spec §4.3 check 9)", () => {
         /**
-         * What `CompactionService.force(input, "idle")` does: a compact run's step 0 with
-         * `{ force: true, requireInContext: true }` (never `manual`, ruling R13).
+         * What `CompactionService.force(input, "idle", mode)` does: a compact run's step 0 with
+         * `{ force: true, idle: mode }` (never `manual`, ruling R13).
          */
         const idleInput = async (agent = icAgent()): Promise<ModelStepInput> => {
           const compactRunId = randomUUID();
@@ -2573,18 +2626,22 @@ describe("runModelStep", () => {
           };
         };
         const settings = () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 });
-        const idleCompact = async (h: Harness, agent = icAgent()) => {
+        const idleCompact = async (h: Harness, agent = icAgent(), mode: IdleMode = "cache") => {
           const input = await idleInput(agent);
           const events = await readAllEvents(eventLog, conversationId);
           const tools = stepToolsOf(await resolveAgentTools(h.d, input, events), input, h.d);
           return runCompaction(h.d, input, events, h.d.config.get().runtime, settings(), tools, {
             force: true,
-            requireInContext: true,
+            idle: mode,
           });
         };
 
         /** An in-context skip: nothing written at all, no summary call, the outcome `skipped`. */
-        const expectSilentSkip = async (h: Harness, agent = icAgent()) => {
+        const expectSilentSkip = async (
+          h: Harness,
+          agent = icAgent(),
+          mode: IdleMode = "cache",
+        ) => {
           const before = (await all()).length;
           const sentBefore = h.sent.length;
           const progress: unknown[] = [];
@@ -2594,7 +2651,7 @@ describe("runModelStep", () => {
           };
           let out: Awaited<ReturnType<typeof idleCompact>>;
           try {
-            out = await idleCompact(h, agent);
+            out = await idleCompact(h, agent, mode);
           } finally {
             delete deps.compactionProgress;
           }
@@ -2693,7 +2750,12 @@ describe("runModelStep", () => {
           const out = await idleCompact(h);
           expect(out).toMatchObject({ summarySeq: null, failed: true });
           expect((await ofType("compaction_failed")).map((f) => f.payload)).toEqual([
-            { attempt: 1, step: 0, reason: "Scripted invalid_request failure" },
+            {
+              attempt: 1,
+              step: 0,
+              reason: "Scripted invalid_request failure",
+              model: { provider: "model-fake", model: "fake-1" },
+            },
           ]);
           const calls = h.sent.filter((r) => r.purpose === "compaction");
           expect(calls).toHaveLength(1);
@@ -2718,7 +2780,7 @@ describe("runModelStep", () => {
             h.d.config.get().runtime,
             settings(),
             tools,
-            { force: true, requireInContext: true },
+            { force: true, idle: "cache" },
           );
           expect(await all()).toHaveLength(before);
           expect(h.sent.slice(sentBefore)).toEqual([]);
@@ -2736,13 +2798,308 @@ describe("runModelStep", () => {
             h.d.config.get().runtime,
             settings(),
             tools,
-            { force: true, requireInContext: true },
+            { force: true, idle: "cache" },
           );
           const [summary] = await ofType("compaction_summary");
           expect(out.summarySeq).toBe(summary?.seq);
           expect(summary?.payload.coversUpToSeq).toBe(prepared.inContext.coversUpToSeq);
           const sent = h.sent.find((r) => r.purpose === "compaction") as ModelRequest;
           expect(sent.messages).toEqual(prepared.inContext.request.messages);
+        });
+
+        it("compaction_model mode without a compaction model writes nothing (no V, no progress)", async () => {
+          const h = harness();
+          await cachedStep(h);
+          await expectSilentSkip(h, icAgent(), "compaction_model");
+          // ended before the in-context build: no skip line either
+          expect(h.skips).toEqual([]);
+        });
+
+        it("compaction_model mode with a compaction model summarizes the transcript on it", async () => {
+          const h = harness({ compactionModel: portTo("fake-c") });
+          await cachedStep(h);
+          const out = await idleCompact(h, icAgent(), "compaction_model");
+          expect(out.failed).toBe(false);
+          const [summary] = await ofType("compaction_summary");
+          expect(out.summarySeq).toBe(summary?.seq);
+          expect(summary?.payload).toMatchObject({ method: "transcript", model: cRef, step: 0 });
+          const calls = h.sent.filter((r) => r.purpose === "compaction");
+          expect(calls.map((r) => r.model)).toEqual(["fake-c"]);
+          expect(h.skips).toEqual(["compaction_model"]);
+        });
+
+        it("C3: cache mode with a compaction model mapped writes nothing (the in-context skip)", async () => {
+          const h = harness({ compactionModel: portTo("fake-c") });
+          await cachedStep(h);
+          await expectSilentSkip(h, icAgent(), "cache");
+          expect(h.skips).toEqual(["compaction_model"]);
+        });
+      });
+
+      describe("the compaction model (compaction model spec §4, §5)", () => {
+        /** A step input as the proactive path builds it for step 1 of the current run. */
+        const stepInput = async (agent = icAgent()): Promise<ModelStepInput> => ({
+          source: "web",
+          orgId,
+          conversationId,
+          runId,
+          step: 1,
+          agent,
+          agentVersion: 1,
+          absorbedUpToSeq: await lastSeq(),
+          signal: new AbortController().signal,
+          sink: () => {},
+          agentId,
+          accountId,
+          conversationKind: "chat",
+        });
+        /** The settings `withSettings(compactNext)` puts in effect. */
+        const proactive = () => ({ ...COMPACTION_SETTINGS.parse({}), ...compactNext });
+        const prepare = async (
+          d: ModelStepDeps,
+          settings = proactive(),
+          opts: Parameters<typeof prepareCompaction>[6] = {},
+          agent = icAgent(),
+        ) => {
+          const input = await stepInput(agent);
+          const events = await readAllEvents(eventLog, conversationId);
+          const tools = stepToolsOf(await resolveAgentTools(d, input, events), input, d);
+          const prepared = await prepareCompaction(
+            d,
+            input,
+            events,
+            d.config.get().runtime,
+            settings,
+            tools,
+            opts,
+          );
+          if ("skipped" in prepared) throw new Error(`skipped: ${prepared.skipped}`);
+          return { prepared, input, events, tools };
+        };
+        const v = { provider: "model-fake", model: "fake-1" };
+        const summaryCalls = (h: Harness) => h.sent.filter((r) => r.purpose === "compaction");
+
+        it("no port: the gated in-context path still runs on model-fake; the summary names V", async () => {
+          const h = harness();
+          await cachedStep(h);
+          await nextTurn("echo:second");
+          await withSettings(compactNext, async () => {
+            await icStep(h.d, 1);
+          });
+          expect(h.skips).toEqual([]);
+          const [summary] = await ofType("compaction_summary");
+          expect(summary?.payload).toMatchObject({ method: "in_context", model: v });
+        });
+
+        it("a port with no mapping: today's transcript request to V (params {}, cap min(setting, V max))", async () => {
+          const port = portTo(null);
+          const h = harness({ compactionModel: port });
+          await cachedStep(h);
+          await nextTurn("echo:second");
+          const settings = { ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 };
+          const { prepared, input, events, tools } = await prepare(h.d, settings, {
+            force: true,
+            manual: true,
+          });
+          expect(prepared.summarizer.source).toBe("conversation");
+          expect(prepared.summaryCap).toBe(Math.min(settings.maxOutputTokens, 4096));
+          const out = await runCompaction(
+            h.d,
+            input,
+            events,
+            h.d.config.get().runtime,
+            settings,
+            tools,
+            { force: true, manual: true },
+          );
+          expect(out.failed).toBe(false);
+          const [call] = summaryCalls(h);
+          expect(summaryCalls(h)).toHaveLength(1);
+          expect(call).toEqual(
+            buildCompactionRequest(prepared.plan.transcript, "fake-1", Math.min(20_000, 4096)),
+          );
+          expect(call?.params).toEqual({});
+          const [summary] = await ofType("compaction_summary");
+          expect(summary?.payload).toMatchObject({ method: "transcript", model: v });
+          expect(port.calls.every((o) => o === orgId)).toBe(true);
+        });
+
+        it("port → C: one transcript request to C with its sanitized params; usage and summary name C; the plan is V's", async () => {
+          const port = portTo("fake-c", { effort: "low", "no-such-knob": 3 });
+          const h = harness({ compactionModel: port });
+          await cachedStep(h);
+          await nextTurn("echo:second");
+          // the same preparation with and without C: only the summarizer differs
+          const without = (await prepare(harness().d)).prepared;
+          const withC = (await prepare(h.d)).prepared;
+          expect(withC.plan).toEqual(without.plan);
+          expect(withC.window).toBe(without.window);
+          expect(withC.ref).toEqual(v);
+          expect(withC.summarizer).toMatchObject({ source: "compaction_model", ref: cRef });
+          expect(withC.inContext).toEqual({ skip: "compaction_model" });
+          const sentBefore = h.sent.length;
+          await withSettings(compactNext, async () => {
+            await icStep(h.d, 1);
+          });
+          const calls = summaryCalls(h);
+          expect(calls).toHaveLength(1);
+          expect(calls[0]).toMatchObject({
+            model: "fake-c",
+            purpose: "compaction",
+            params: { effort: "low" },
+            maxOutputTokens: 4096,
+          });
+          expect(h.sent.slice(sentBefore).filter((r) => r.purpose === "compaction")).toHaveLength(
+            1,
+          );
+          expect(h.skips).toEqual(["compaction_model"]);
+          const [summary] = await ofType("compaction_summary");
+          expect(summary?.payload).toMatchObject({
+            method: "transcript",
+            model: cRef,
+            coversUpToSeq: without.plan.coversUpToSeq,
+          });
+          const events = await all();
+          const opening = openingSeqs(
+            events,
+            runId,
+            without.plan.coversUpToSeq,
+            (await stepInput()).absorbedUpToSeq,
+          );
+          expect(summary?.payload.openingSeqs).toEqual(opening.length > 0 ? opening : undefined);
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage.map((u) => [u.payload.provider, u.payload.model])).toEqual([
+            ["model-fake", "fake-c"],
+          ]);
+        });
+
+        it("port → a C too small to be useful (32k window): V writes the summary, debug compaction_model_small", async () => {
+          const h = harness({ compactionModel: portTo("fake-c32") });
+          await cachedStep(h);
+          await nextTurn("echo:second");
+          await withSettings(compactNext, async () => {
+            await icStep(h.d, 1);
+          });
+          const [summary] = await ofType("compaction_summary");
+          expect(summary?.payload).toMatchObject({ method: "in_context", model: v });
+          expect(summaryCalls(h).map((r) => r.model)).toEqual(["fake-1"]);
+          expect(h.lines).toContainEqual(
+            expect.objectContaining({ level: "debug", reason: "compaction_model_small" }),
+          );
+        });
+
+        it("port → a C the registry cannot resolve: V writes the summary, warn compaction_model_unavailable", async () => {
+          const h = harness({ compactionModel: portTo("fake-c"), resolveFails: "fake-c" });
+          await cachedStep(h);
+          await nextTurn("echo:second");
+          await withSettings(compactNext, async () => {
+            await icStep(h.d, 1);
+          });
+          const [summary] = await ofType("compaction_summary");
+          expect(summary?.payload).toMatchObject({ method: "in_context", model: v });
+          expect(h.lines).toContainEqual(
+            expect.objectContaining({ level: "warn", reason: "compaction_model_unavailable" }),
+          );
+        });
+
+        it("a port that throws another error fails the compaction as today: no silent V", async () => {
+          const h = harness({
+            compactionModel: {
+              target: async () => {
+                throw new Error("purposes read failed");
+              },
+            },
+          });
+          await cachedStep(h);
+          await nextTurn("echo:second");
+          const before = (await all()).length;
+          const sentBefore = h.sent.length;
+          const input = await stepInput();
+          const events = await readAllEvents(eventLog, conversationId);
+          const tools = stepToolsOf(await resolveAgentTools(h.d, input, events), input, h.d);
+          await expect(
+            runCompaction(h.d, input, events, h.d.config.get().runtime, proactive(), tools),
+          ).rejects.toThrow("purposes read failed");
+          expect(h.sent.slice(sentBefore)).toEqual([]);
+          expect(await all()).toHaveLength(before);
+        });
+
+        it("C's call fails: compaction_failed names C, and no request goes to V (Q1)", async () => {
+          const h = harness({ compactionModel: portTo("fake-c"), failModel: "fake-c" });
+          await cachedStep(h);
+          await nextTurn("echo:second");
+          await withSettings(compactNext, async () => {
+            await icStep(h.d, 1);
+          });
+          expect(summaryCalls(h).map((r) => r.model)).toEqual(["fake-c"]);
+          expect((await ofType("compaction_failed")).map((f) => f.payload)).toEqual([
+            { attempt: 1, step: 1, reason: "Scripted summarizer failure", model: cRef },
+          ]);
+          expect(await ofType("compaction_summary")).toEqual([]);
+        });
+
+        it("reactive (force, ref = the rung, transcriptOnly): the rung's window plans, C summarizes, cap = min(setting, rung max, C max)", async () => {
+          const rung = { provider: "stub", model: "rung" };
+          const c = { provider: "stub", model: "c" };
+          const s = stub(
+            [
+              stubInfo("rung", { contextWindow: 24_000, maxOutputTokens: 3000 }),
+              stubInfo("c", { contextWindow: 200_000, maxOutputTokens: 2048 }),
+            ],
+            (req) =>
+              req.purpose === "compaction" ? `<summary>${"s".repeat(2000)}</summary>` : "ok",
+          );
+          stubImpl = s;
+          const port = { target: async () => ({ model: c, params: {} }) };
+          const h = harness({ compactionModel: port });
+          await cachedStep(h);
+          await nextTurn("echo:second");
+          const settings = { ...COMPACTION_SETTINGS.parse({}), maxOutputTokens: 2500 };
+          const opts = { force: true, ref: rung, transcriptOnly: true };
+          const without = (await prepare(harness().d, settings, opts)).prepared;
+          const { prepared, input, events, tools } = await prepare(h.d, settings, opts);
+          expect(prepared.window).toBe(24_000);
+          expect(prepared.ref).toEqual(rung);
+          expect(prepared.plan).toEqual(without.plan);
+          expect(without.summaryCap).toBe(2500);
+          expect(prepared.summaryCap).toBe(2048);
+          expect(prepared.summarizer).toMatchObject({ source: "compaction_model", ref: c });
+          const out = await runCompaction(
+            h.d,
+            input,
+            events,
+            h.d.config.get().runtime,
+            settings,
+            tools,
+            opts,
+          );
+          expect(out.failed).toBe(false);
+          expect(s.calls.map((r) => [r.model, r.maxOutputTokens, r.purpose])).toEqual([
+            ["c", 2048, "compaction"],
+          ]);
+          const [summary] = await ofType("compaction_summary");
+          expect(summary?.payload).toMatchObject({ method: "transcript", model: c });
+        });
+
+        it("compactionModelPort: unconfigured → null, a mapping as is, any other error rethrown", async () => {
+          const target = { model: cRef, params: { effort: "low" } };
+          await expect(
+            compactionModelPort({ resolve: async () => target }).target(orgId),
+          ).resolves.toEqual(target);
+          await expect(
+            compactionModelPort({
+              resolve: async () => {
+                throw new ApiError("model.unconfigured", "none");
+              },
+            }).target(orgId),
+          ).resolves.toBeNull();
+          await expect(
+            compactionModelPort({
+              resolve: async () => {
+                throw new ApiError("model.purpose_unknown", "no");
+              },
+            }).target(orgId),
+          ).rejects.toThrow("no");
         });
       });
     });
@@ -3753,6 +4110,7 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
         attempt: 1,
         step: 1,
         reason: 'compaction request blocked by the "guard" policy hook (deny)',
+        model: { provider: "model-fake", model: "fake-small" },
       },
     ]);
     expect(JSON.stringify(await all())).not.toContain("raw detail");

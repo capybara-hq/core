@@ -605,7 +605,7 @@ describe("idle compaction core (idle compaction spec §4.3, §5)", () => {
     withOrgScope(input.orgId, () => k.app.get(CompactionService).force(input, "idle"));
 
   const probe = ({ runId: _r, signal: _s, accountId: _a, ...input }: ForceCompactionInput) =>
-    withOrgScope(input.orgId, () => k.app.get(CompactionService).probeIdle(input));
+    withOrgScope(input.orgId, () => k.app.get(CompactionService).probeIdle(input, "cache"));
 
   it('force(input, "idle") on a finished conversation summarizes in context', async () => {
     const { orgId, conv } = await setup();

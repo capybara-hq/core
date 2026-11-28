@@ -1,4 +1,4 @@
-import type { ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelRequest, ParamValue } from "@capybara-hq/plugin-sdk";
 import { renderBackgroundFinished } from "../../background/render.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import type { CompactionSettings } from "../../identity/settings.js";
@@ -778,13 +778,15 @@ function splitLine(line: string, max: number): string[] {
  * which the caller narrows to the model's own cap (context compaction spec §4.8); omitted, it is
  * the built-in default. `retry` is the one retry after a call stopped at the output token limit:
  * the same request with {@link compactionRetryNote} after the transcript (the cut-off answer is not
- * sent back, so the request stays inside the same input budget).
+ * sent back, so the request stays inside the same input budget). `params` are the summarizer's
+ * request parameters: a compaction model's mapping, sanitized against its declarations (compaction
+ * model spec §4.5); the conversation model summarizes with none (`{}`, the default).
  */
 export function buildCompactionRequest(
   transcript: string,
   model: string,
   maxOutputTokens: number = COMPACTION_MAX_OUTPUT_TOKENS,
-  opts: { retry?: boolean } = {},
+  opts: { retry?: boolean; params?: Record<string, ParamValue> } = {},
 ): ModelRequest {
   return {
     model,
@@ -802,7 +804,7 @@ export function buildCompactionRequest(
     ],
     tools: [],
     maxOutputTokens,
-    params: {},
+    params: opts.params ?? {},
     purpose: "compaction",
   };
 }

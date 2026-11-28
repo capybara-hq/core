@@ -2,6 +2,7 @@ import type { ConversationSource } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { AgentDefinition } from "../agents/definition.js";
 import { EventLog } from "../conversations/event-log.js";
+import type { IdleMode } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { CompactionSettingsService } from "./compaction-settings.service.js";
 import {
@@ -82,10 +83,11 @@ export interface ForcedCompaction {
  *   The run writes only its outcome, with `step: 0`: `compaction_summary` / `compaction_failed` +
  *   the summary calls' `usage`, or `compaction_skipped` when there is nothing to summarize
  *   (maintainer decision 2026-11-28); no user message and no model step.
- * - `idle` adds `requireInContext: true` and never `manual` (ruling R13): the automatic plan, the
- *   in-context summary only. Every early end (nothing to summarize, an unavailable model, an
- *   in-context skip) writes nothing; a failed call writes `compaction_failed` (the backoff of later
- *   idle attempts).
+ * - `idle` adds `idle: mode` and never `manual` (ruling R13): the automatic plan; in `cache` mode
+ *   the in-context summary only, in `compaction_model` mode the compaction model's transcript
+ *   summary only (compaction model spec §6.3, never V). Every early end (nothing to summarize, an
+ *   unavailable model, an in-context skip, no compaction model) writes nothing; a failed call
+ *   writes `compaction_failed` (the backoff of later idle attempts).
  */
 @Injectable()
 export class CompactionService {
@@ -99,10 +101,11 @@ export class CompactionService {
   async force(
     input: ForceCompactionInput,
     origin: CompactOrigin = "manual",
+    idleMode: IdleMode = "cache",
   ): Promise<ForcedCompaction> {
     const env = await this.environment(input);
     const opts: CompactOptions =
-      origin === "manual" ? { force: true, manual: true } : { force: true, requireInContext: true };
+      origin === "manual" ? { force: true, manual: true } : { force: true, idle: idleMode };
     const out = await runCompaction(
       this.steps.deps,
       env.stepInput,
@@ -117,10 +120,12 @@ export class CompactionService {
 
   /**
    * The idle compaction job's dry run (idle compaction spec §4.3 checks 8 and 9): the preparation
-   * an idle compact run would do, with nothing written and no model call. Null when the model or
-   * the attachment storage cannot be reached right now (the probe learns nothing).
+   * an idle compact run would do in `mode`, with nothing written and no model call. Null when the
+   * model or the attachment storage cannot be reached right now (the probe learns nothing), and in
+   * `compaction_model` mode when the compaction model does not summarize now. In `cache` mode a
+   * compaction model mapped since arming reports `inContext: false` (spec issue C3).
    */
-  async probeIdle(input: IdleProbeInput): Promise<IdleProbe | null> {
+  async probeIdle(input: IdleProbeInput, mode: IdleMode): Promise<IdleProbe | null> {
     const env = await this.environment({
       ...input,
       runId: PROBE_RUN_ID,
@@ -134,7 +139,7 @@ export class CompactionService {
       this.config.get().runtime,
       env.compaction,
       env.tools,
-      { force: true, requireInContext: true },
+      { force: true, idle: mode },
     );
     if ("skipped" in prepared) {
       if (prepared.skipped !== "no_plan") return null;
