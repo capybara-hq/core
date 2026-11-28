@@ -126,4 +126,55 @@ describe("inline tokens", () => {
     );
     expect(connectorMentionText({ ...base, toolCount: 7, toolSearch: false })).toBe(head);
   });
+
+  it("refuses an escaping project path in an entity key", () => {
+    expect(() => tokenEntityKey({ type: "projectFile", path: "../x" })).toThrow(
+      expect.objectContaining({ code: "device.path_outside_project" }),
+    );
+  });
+
+  it("keeps stray markers and invisible characters out of labels", () => {
+    expect(foldLabel("a\uFFFCb")).toBe("a b");
+    expect(foldLabel("a\u200Bb\u202Ec")).toBe("abc");
+    expect(foldLabel("a\u200Db")).toBe("a\u200Db");
+    expect(foldLabel(`${"x".repeat(79)} y`.padEnd(90, "z"))).toBe(`${"x".repeat(79)}…`);
+  });
+
+  it("skips numbered labels another entity already holds", () => {
+    const m = numberLabels([
+      { key: "A", label: "a" },
+      { key: "B", label: "a" },
+      { key: "C", label: "a (2)" },
+      { key: "D", label: "a" },
+    ]);
+    expect(m.get("A")).toBe("a");
+    expect(m.get("B")).toBe("a (2)");
+    expect(m.get("C")).toBe("a (2) (2)");
+    expect(m.get("D")).toBe("a (3)");
+  });
+
+  it("offsets adjacent markers, surrogate pairs and a folded connector label", () => {
+    const toks = [
+      { type: "connector", connectorId: "c" },
+      { type: "file", id: "f" },
+    ] as const;
+    const r = renderInline(
+      "\uFFFC\uFFFC",
+      toks,
+      (t) => (t.type === "connector" ? foldLabel("Sl[a]ck\n") : "a.png"),
+      () => "x",
+    );
+    expect(r.text).toBe("[connector: Sl(a)ck][file: a.png]");
+    expect(r.inline.map((e) => [e.start, e.end])).toEqual([
+      [0, 20],
+      [20, 33],
+    ]);
+    const p = renderInline(
+      "😀\uFFFC",
+      [{ type: "file", id: "f" }],
+      () => "a",
+      () => "x",
+    );
+    expect(p.inline[0]).toMatchObject({ start: 2, end: 11 });
+  });
 });

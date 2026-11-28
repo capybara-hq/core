@@ -8,6 +8,9 @@ export const MAX_CONNECTOR_MENTIONS = 3;
 export const MENTION_LOAD_MAX_TOOLS = 20;
 
 const MAX_LABEL_POINTS = 80;
+const MARKER_RE = new RegExp(TOKEN_MARKER, "g");
+// invisible format characters, except the zero-width (non-)joiners that emoji and some scripts need
+const FORMAT_CHARS = /(?![\u200C\u200D])\p{Cf}/gu;
 // C0 and C1 control characters, DEL, and the Unicode line and paragraph separators
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it folds
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
@@ -41,7 +44,11 @@ export function countMarkers(text: string): number {
   return n;
 }
 
-/** The identity of the entity a token names; a repeated entity counts and numbers once. */
+/**
+ * The identity of the entity a token names; a repeated entity counts and numbers once. A project
+ * file path is normalized through `projectFilePath`, which throws an `ApiError`
+ * `device.path_outside_project` for a path that is absolute, escapes the project, or names its root.
+ */
 export function tokenEntityKey(t: MessageToken): string {
   switch (t.type) {
     case "connector":
@@ -58,30 +65,49 @@ export function tokenEntityKey(t: MessageToken): string {
 }
 
 /**
- * A label safe inside a placeholder: control characters and line breaks become one space, square
- * brackets become parentheses, trimmed, at most 80 code points (then an ellipsis).
+ * A label safe inside a placeholder: control characters, line breaks and the token marker become
+ * a space, other invisible format characters (Cf, except the zero-width joiners that emoji and
+ * some scripts need) are dropped, square brackets become parentheses, trimmed, at most 80 code
+ * points (then an ellipsis, after trimming the cut end).
  */
 export function foldLabel(raw: string): string {
-  const folded = raw.replace(CONTROLS, " ").replace(/\[/g, "(").replace(/\]/g, ")").trim();
+  const folded = raw
+    .replace(CONTROLS, " ")
+    .replace(MARKER_RE, " ")
+    .replace(FORMAT_CHARS, "")
+    .replace(/\[/g, "(")
+    .replace(/\]/g, ")")
+    .trim();
   const points = Array.from(folded);
   return points.length > MAX_LABEL_POINTS
-    ? `${points.slice(0, MAX_LABEL_POINTS).join("")}…`
+    ? `${points.slice(0, MAX_LABEL_POINTS).join("").trimEnd()}…`
     : folded;
 }
 
 /**
  * Numbers colliding labels: the first entity (by first appearance) keeps its label, a second
- * different entity with the same label gets " (2)", the third " (3)". A repeated key keeps its
- * first label.
+ * different entity with the same label gets " (2)", the third " (3)"; a numbered label that is
+ * itself taken by another entity skips to the next free number. A repeated key keeps its first
+ * label. Callers number per kind, passing file tokens before uploads.
  */
 export function numberLabels(items: { key: string; label: string }[]): Map<string, string> {
   const out = new Map<string, string>();
-  const seen = new Map<string, number>();
+  const used = new Set<string>();
+  const next = new Map<string, number>();
+  // plain labels are claimed first-come, so a later entity's real label is never numbered away
   for (const { key, label } of items) {
     if (out.has(key)) continue;
-    const n = (seen.get(label) ?? 0) + 1;
-    seen.set(label, n);
-    out.set(key, n === 1 ? label : `${label} (${n})`);
+    if (!used.has(label)) {
+      used.add(label);
+      out.set(key, label);
+      continue;
+    }
+    let n = next.get(label) ?? 2;
+    while (used.has(`${label} (${n})`)) n++;
+    next.set(label, n + 1);
+    const numbered = `${label} (${n})`;
+    used.add(numbered);
+    out.set(key, numbered);
   }
   return out;
 }
