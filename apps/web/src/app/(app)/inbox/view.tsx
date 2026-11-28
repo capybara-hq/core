@@ -390,7 +390,11 @@ function Inbox({
               onAction: (actionId) => void pressItemAction(active.item, actionId),
               onDanger: (action) => setDangerAction({ item: active.item, action }),
               onDismiss: () => void dismissItem(active.item),
-              onOpen: (link) => router.push(link),
+              // an in-app path stays on the router; a subject outside the app opens in a new tab
+              onOpen: (link) =>
+                link.startsWith("/")
+                  ? router.push(link)
+                  : window.open(link, "_blank", "noopener,noreferrer"),
               ti,
               locale,
             })

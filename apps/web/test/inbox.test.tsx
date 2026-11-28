@@ -1684,8 +1684,11 @@ describe("personal inbox items", () => {
         .replace("{person}", "Olga")
         .replace("{agent}", "Builder");
       expect(await screen.findByText(hint)).toBeTruthy();
+      const open = vi.spyOn(window, "open").mockReturnValue(null);
       await userEvent.setup().click(screen.getByRole("button", { name: m.inbox.item.open }));
-      expect(router.push).toHaveBeenCalledWith(url);
+      expect(open).toHaveBeenCalledWith(url, "_blank", "noopener,noreferrer");
+      expect(router.push).not.toHaveBeenCalledWith(url);
+      open.mockRestore();
     },
   );
 
