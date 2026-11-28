@@ -214,7 +214,7 @@ export function automationColumns(
     {
       key: "name",
       header: t("columns.name"),
-      // an acceptance automation carries the 接收规则 tag and says which source's work it
+      // an acceptance automation carries the Acceptance rule tag and says which source's work it
       // accepts (collaboration spec §4.4)
       cell: (s) =>
         s.origin === "acceptance" ? (

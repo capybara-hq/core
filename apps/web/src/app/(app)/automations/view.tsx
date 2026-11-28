@@ -39,7 +39,7 @@ import NotFound from "../not-found";
  * (`components/AutomationCalendarView`). Members up (guests can't create tasks: the no-access
  * state). From the query cache (the layout prefetched the list, the agents and, for a remembered
  * calendar, its range on a first load). `initial` is the view `page.tsx` read from the address and
- * the `cap_automations_view` cookie. When a source directs events to me, the head's 接收规则 opens
+ * the `cap_automations_view` cookie. When a source directs events to me, the head's Acceptance rules action opens
  * my acceptance rules in a Sheet over either view (`?rules=1`, `AcceptanceRulesSheet`).
  */
 export default function AutomationsView({ initial }: { initial: AutomationsUrl }) {

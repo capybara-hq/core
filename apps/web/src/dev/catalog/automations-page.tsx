@@ -242,7 +242,7 @@ function seeded(variant: AutomationsPageVariant, zone: string): QueryClient {
   });
   const mine = TASKS.filter((t) => t.length < 5).map((t) => listTask(calTask(t, zone)));
   qc.setQueryData(automationsQuery(ORG).queryKey, { items: mine });
-  // no source directs events to me: the head has no 接收规则 (the baselines stay as they are)
+  // no source directs events to me: the head has no Acceptance rules action (the baselines stay as they are)
   qc.setQueryData(acceptanceRulesQuery(ORG).queryKey, { items: [], directedDefault: "auto" });
   qc.setQueryData(automationsQuery(ORG, "all").queryKey, {
     items: TASKS.map((t) => listTask(calTask(t, zone))),

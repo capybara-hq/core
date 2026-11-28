@@ -163,7 +163,7 @@ const common = {
     ],
   }),
   [`GET ${BASE}/event-sources`]: ok({ items: [] }),
-  // no source directs events to me: no 接收规则 in the head
+  // no source directs events to me: no Acceptance rules action in the head
   [`GET ${BASE}/acceptance`]: ok({ items: [], directedDefault: "auto" }),
   [`GET ${BASE}/grantable-tools?agentId=ag1`]: ok({ items: TOOLS }),
   [`GET ${BASE}/grantable-tools?agentId=ag2`]: ok({ items: TOOLS }),

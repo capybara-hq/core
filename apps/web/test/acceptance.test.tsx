@@ -20,7 +20,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 /**
- * Directed work (collaboration spec §4.4) on the web: my acceptance rules in the 接收规则 sheet of
+ * Directed work (collaboration spec §4.4) on the web: my acceptance rules in the Acceptance rules sheet of
  * `/automations` (one choice per source, saved at once; the head's entry shows only while a source
  * directs events to me; `?rules=1` opens it) and a work offer in the inbox (accept or decline).
  */
@@ -57,7 +57,7 @@ describe("/automations: the acceptance rules sheet", () => {
     vi.unstubAllGlobals();
   });
 
-  it("no source directs events to me: the head has no 接收规则", async () => {
+  it("no source directs events to me: the head has no Acceptance rules action", async () => {
     stubApi({ ...page, [`GET ${RULES}`]: () => json(200, { items: [], directedDefault: "auto" }) });
     await renderRouteWithCache("/automations?view=list", lastStubRoutes(), { locale: "en" });
     expect(screen.getByRole("heading", { level: 1, name: en.automations.title })).toBeTruthy();

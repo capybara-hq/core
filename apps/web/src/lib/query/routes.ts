@@ -1273,7 +1273,7 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/automations",
     // Members up (guests get no access): my tasks, the agents that name them, the org's settings
-    // (turned off; sections) and my acceptance rules (the head's 接收规则 and its sheet). The calendar view (the address, else the remembered view)
+    // (turned off; sections) and my acceptance rules (the head's Acceptance rules action and its sheet). The calendar view (the address, else the remembered view)
     // also needs the range it shows, keyed by the viewer's zone: only when the server knows it
     // (the `cb-tz` cookie), else the view reads it on mount (calendar spec §9).
     queries: ({ orgId, me, search, cookie, now }) => {
