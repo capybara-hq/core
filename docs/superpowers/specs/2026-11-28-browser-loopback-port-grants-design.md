@@ -210,7 +210,7 @@ All text is in English and describes the mechanism:
 - capybara-device ships the proxy carve-out and the feature flag. Machines that are not upgraded
   keep today's behavior, with the update note.
 
-## 10. AGENTS.md rules touched
+## AGENTS.md rules touched
 
 - **Sandboxes**: "private ranges, metadata and host services stay closed" gains "except a loopback
   port granted to a device service for one conversation (`loopback-port`, decided like an
@@ -218,7 +218,7 @@ All text is in English and describes the mechanism:
 - **Device access (`ctx.deviceAccess`)**: add "a loopback grant is per conversation and per port,
   owner-only, and expires with the conversation or after 24 hours".
 
-## 11. Calls left to the builder, and calls made here
+## 10. Calls left to the builder, and calls made here
 
 Made here (the maintainer can overturn them):
 
