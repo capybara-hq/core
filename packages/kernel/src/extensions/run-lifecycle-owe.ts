@@ -1,6 +1,6 @@
 import type { RunLifecyclePayload } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { ConversationSubject, KernelSchemaDb } from "../db/kernel-schema.js";
 import type { OutboxService } from "../infra/outbox/outbox.service.js";
 import { deployedSnapshot } from "./deployed-snapshots.js";
 import { isExtensionEnabled } from "./enabled.js";
@@ -72,45 +72,46 @@ async function owe(
 }
 
 /**
+ * What the caller already holds of a run and its conversation: callers read these columns in the
+ * statement that changes the run, so a conversation without a subject costs no extra query.
+ */
+export interface RunLifecycleFacts {
+  orgId: string;
+  conversationId: string;
+  runId: string;
+  agentId: string;
+  agentVersion: number;
+  /** The run's trigger account, else the conversation's owner. */
+  accountId: string;
+  subject: ConversationSubject | null;
+}
+
+/**
  * Owes `run.lifecycle` for a run of a conversation with a subject, in the caller's transaction
  * (the one that changed the run: the outbox row commits or rolls back with it). Nothing when the
- * conversation has no subject, the run is unknown, or the subject's plugin does not subscribe.
- * Observe-only: the delivery never affects the run. `waitId` keeps each wait of one run apart.
+ * conversation has no subject, or the subject's plugin does not subscribe. Observe-only: the
+ * delivery never affects the run. `waitId` keeps each wait of one run apart.
  */
-export async function oweRunLifecycleIn(
+export async function oweRunLifecycleFor(
   db: KernelSchemaDb,
   outbox: Pick<OutboxService, "add">,
+  f: RunLifecycleFacts,
   a: {
-    runId: string;
     phase: Exclude<Phase, "offer_declined">;
-    waitingOn?: "approval" | "question" | "input";
+    waitingOn?: "approval" | "input";
     waitId?: string;
   },
 ): Promise<void> {
-  const row = await db
-    .selectFrom("runs")
-    .innerJoin("conversations", "conversations.id", "runs.conversation_id")
-    .select([
-      "conversations.org_id",
-      "conversations.id as conversation_id",
-      "conversations.agent_id",
-      "conversations.account_id",
-      "conversations.subject",
-      "runs.agent_version",
-      "runs.trigger_account_id",
-    ])
-    .where("runs.id", "=", a.runId)
-    .executeTakeFirst();
-  const subject = row?.subject;
-  if (!row || !subject) return;
-  if (!(await subscribesToRunLifecycle(db, row.org_id, subject.source))) return;
+  const subject = f.subject;
+  if (!subject) return;
+  if (!(await subscribesToRunLifecycle(db, f.orgId, subject.source))) return;
   const payload: RunLifecyclePayload = {
-    orgId: row.org_id,
-    accountId: row.trigger_account_id ?? row.account_id,
-    agentId: row.agent_id,
-    agentVersion: row.agent_version,
-    conversationId: row.conversation_id,
-    runId: a.runId,
+    orgId: f.orgId,
+    accountId: f.accountId,
+    agentId: f.agentId,
+    agentVersion: f.agentVersion,
+    conversationId: f.conversationId,
+    runId: f.runId,
     phase: a.phase,
     subject: { kind: subject.kind, id: subject.id },
     ...(a.waitingOn !== undefined && { waitingOn: a.waitingOn }),
@@ -119,7 +120,7 @@ export async function oweRunLifecycleIn(
     outbox,
     subject.source,
     payload,
-    runLifecycleJobId({ id: a.runId, phase: a.phase, waitId: a.waitId }),
+    runLifecycleJobId({ id: f.runId, phase: a.phase, waitId: a.waitId }),
   );
 }
 

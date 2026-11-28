@@ -4,7 +4,7 @@ import { AutomationRunTracker } from "../automations/run-tracker.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { pauseQueueIn } from "../conversations/queue.js";
-import { oweRunLifecycleIn } from "../extensions/run-lifecycle-owe.js";
+import { oweRunLifecycleFor } from "../extensions/run-lifecycle-owe.js";
 import { GitRunEnd } from "../git/run-end.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -100,6 +100,8 @@ export class RunFinish {
         "kind",
         "org_id",
         "deleted_at",
+        "agent_id",
+        "subject",
         eb
           .exists(
             eb
@@ -116,7 +118,7 @@ export class RunFinish {
     const pending = await lockWaitRowsIn(t, a.runId);
     const run = await t
       .selectFrom("runs")
-      .select("status")
+      .select(["status", "agent_version", "trigger_account_id", "compact"])
       .where("id", "=", a.runId)
       .forUpdate()
       .executeTakeFirst();
@@ -148,11 +150,27 @@ export class RunFinish {
       .where("id", "=", a.runId)
       .execute();
     await this.taskRuns.onRunFinished(a.runId, a.status, failureMessage(a.event));
-    // the subject's plugin hears of the end in this transaction (observe-only, delivered later)
-    await oweRunLifecycleIn(t, this.outbox, {
-      runId: a.runId,
-      phase: a.status === "completed" ? "finished" : "failed",
-    });
+    // the subject's plugin hears of the end in this transaction (observe-only, delivered later);
+    // a compact run was never announced, so it has no end to tell
+    if (conv?.subject && !run.compact) {
+      await oweRunLifecycleFor(
+        t,
+        this.outbox,
+        {
+          orgId: conv.org_id,
+          conversationId: a.conversationId,
+          runId: a.runId,
+          agentId: conv.agent_id,
+          agentVersion: run.agent_version,
+          accountId: run.trigger_account_id,
+          subject: conv.subject,
+        },
+        {
+          phase:
+            a.status === "completed" ? "finished" : a.status === "aborted" ? "aborted" : "failed",
+        },
+      );
+    }
     // the terminal status is committed first, then the tickets go (the one place runs end)
     afterCommit(() => this.gitRunEnd.onRunFinished(a.runId));
     // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7)

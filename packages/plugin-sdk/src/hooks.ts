@@ -344,8 +344,9 @@ export interface OrgDeletedPayload {
  * Handlers must be idempotent. The payload carries ids only.
  *
  * - `started`: a run of the conversation was created (queued).
- * - `waiting`: the run suspended on a person (`waitingOn`: an approval or a question).
- * - `finished`: the run completed. `failed`: it failed or was stopped.
+ * - `waiting`: the run suspended on a person (`waitingOn`: an `approval`, or `input`: a question
+ *   or a connect card).
+ * - `finished`: the run completed. `failed`: it failed. `aborted`: a person or the kernel stopped it.
  * - `offer_declined`: directed work was not run (`reason`): the person's rule is `off`, the person
  *   `declined` the offer, or their acceptance automation is `paused`. No run and no conversation:
  *   `accountId` and `agentId` are the event's audience.
@@ -361,11 +362,11 @@ export interface RunLifecyclePayload {
   conversationId?: string;
   /** Absent for `offer_declined`. */
   runId?: string;
-  phase: "started" | "waiting" | "finished" | "failed" | "offer_declined";
+  phase: "started" | "waiting" | "finished" | "failed" | "aborted" | "offer_declined";
   /** The conversation's subject (or the directed event's subject). */
   subject: { kind: string; id: string };
   /** Set for `waiting`. */
-  waitingOn?: "approval" | "question" | "input";
+  waitingOn?: "approval" | "input";
   /** Set for `offer_declined`. */
   reason?: "declined" | "off" | "paused";
 }

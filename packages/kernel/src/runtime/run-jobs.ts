@@ -4,7 +4,7 @@ import type { Job, Queue } from "bullmq";
 import { sql } from "kysely";
 import { BG_WAKE_JOB, type BgWakeJobData, bgWakeJobId } from "../background/wake-rules.js";
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
-import { oweRunLifecycleIn } from "../extensions/run-lifecycle-owe.js";
+import { oweRunLifecycleFor, type RunLifecycleFacts } from "../extensions/run-lifecycle-owe.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -183,10 +183,10 @@ export class RunJobs {
 
   /**
    * Owes the `started` notice of a new run to the plugin of its conversation's subject, in the
-   * caller's transaction (the run row is already written); nothing when there is none.
+   * caller's transaction; nothing when the conversation has none (no query then).
    */
-  oweRunStarted(db: KernelSchemaDb, runId: string): Promise<void> {
-    return oweRunLifecycleIn(db, this.outbox, { runId, phase: "started" });
+  oweRunStarted(db: KernelSchemaDb, facts: RunLifecycleFacts): Promise<void> {
+    return oweRunLifecycleFor(db, this.outbox, facts, { phase: "started" });
   }
 
   /** {@link oweEnsureRun} in the caller's transaction. */

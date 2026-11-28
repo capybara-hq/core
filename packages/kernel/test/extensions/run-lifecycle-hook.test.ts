@@ -18,6 +18,7 @@ import { RUN_LIFECYCLE_JOB, runLifecycleJobId } from "../../src/extensions/run-l
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
+import { RunFinish } from "../../src/runtime/run-finish.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -235,7 +236,7 @@ describe("run.lifecycle: runs", () => {
     expect(phases()).toEqual(["started", "waiting", "finished"]);
   });
 
-  it("a stopped run produces failed", async () => {
+  it("a stopped run produces aborted", async () => {
     const conv = await subjectConv(RUN_PLUGIN);
     await postMessage(owner, orgId, conv, ECHO);
     await waitForEvent(db, conv, (e) => e.type === "approval_requested", 15_000, "approval");
@@ -247,7 +248,39 @@ describe("run.lifecycle: runs", () => {
     expect(res.statusCode, res.body).toBe(202);
     await waitForTerminal(db, conv);
     await delivered(3);
-    expect(phases()).toEqual(["started", "waiting", "failed"]);
+    expect(phases()).toEqual(["started", "waiting", "aborted"]);
+  });
+
+  it("a compact run's end is not told (it was never announced)", async () => {
+    const conv = await subjectConv(RUN_PLUGIN);
+    const runId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conv,
+        status: "running",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 0,
+        compact: true,
+      })
+      .execute();
+    const toSeq = await k.app.get(RunFinish).finish({
+      conversationId: conv,
+      runId,
+      status: "completed",
+      consumed: null,
+      event: { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 0 } },
+    });
+    expect(toSeq).not.toBeNull();
+    const owed = await db
+      .selectFrom("outbox")
+      .select("job_id")
+      .where("job_name", "=", RUN_LIFECYCLE_JOB)
+      .execute();
+    expect(owed).toEqual([]);
+    expect(runProbe().calls).toEqual([]);
   });
 
   it("a conversation without a subject produces nothing", async () => {

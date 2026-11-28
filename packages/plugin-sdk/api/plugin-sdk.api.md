@@ -3988,14 +3988,14 @@ export interface RunLifecyclePayload {
     agentVersion?: number;
     conversationId?: string;
     orgId: string;
-    phase: "started" | "waiting" | "finished" | "failed" | "offer_declined";
+    phase: "started" | "waiting" | "finished" | "failed" | "aborted" | "offer_declined";
     reason?: "declined" | "off" | "paused";
     runId?: string;
     subject: {
         kind: string;
         id: string;
     };
-    waitingOn?: "approval" | "question" | "input";
+    waitingOn?: "approval" | "input";
 }
 
 // @public
