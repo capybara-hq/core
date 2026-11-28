@@ -23,9 +23,9 @@
   transform-origin: center;
 }
 
-/* In the composer's grid the ring takes the cell before send / stop: a fourth track exists only
-   while the ring does, so a composer without one keeps its columns. */
-.cb-composer:has(.cb-composer-box > .cb-context-meter) {
+/* In the composer field's grid the ring takes the cell before send / stop: a fourth track exists
+   only while the ring does, so a composer without one keeps its columns. */
+.cb-composer-field:has(.cb-composer-box > .cb-context-meter) {
   grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
 .cb-composer-box > .cb-context-meter {
@@ -37,9 +37,6 @@
   grid-column: 4;
 }
 @media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
-  .cb-composer:has(.cb-composer-box > .cb-context-meter) {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
   .cb-composer-box:has(> .cb-context-meter) {
     grid-template-columns: auto minmax(0, 1fr) auto auto;
   }

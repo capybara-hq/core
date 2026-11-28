@@ -2261,15 +2261,27 @@ button.cb-file-card:focus-visible {
 
 /* ── Composer frame (§6.16.2; the control row comes with the full composer) ── */
 
-/* A grid: the token warning, the attachments and the text across the three columns, then ＋ · the
-   control row · send on one line (the text box, `.cb-composer-box`, draws no box of its own here:
-   its text, ＋ and send take the frame's cells). */
+/* The frame: a column of what stands above the box (the open menu, the place tray) and the box
+   itself, the field; it draws nothing of its own and anchors the open menu. */
 .cb-composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* The field, a grid: the token warning, the attachments and the text across the three columns,
+   then ＋ · the control row · send on one line (the text box, `.cb-composer-box`, draws no box of
+   its own here: its text, ＋ and send take the field's cells). One inset, space.2, on all four
+   sides: the corner controls sit space.2 from both edges they touch. Positioned, so it paints over
+   the tray's edge it overlaps. */
+.cb-composer-field {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   column-gap: var(--cb-space-1);
-  padding: var(--cb-space-2) var(--cb-space-2) var(--cb-space-2) var(--cb-space-3);
+  min-width: 0;
+  padding: var(--cb-space-2);
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-md);
   background: var(--cb-raised);
@@ -2278,16 +2290,17 @@ button.cb-file-card:focus-visible {
     border-color var(--cb-motion-hover),
     box-shadow var(--cb-motion-hover);
 }
-/* The text's own focus (not :focus-within): an open picker menu leaves the frame neutral. */
-.cb-composer:has(.cb-composer-input:focus) {
+/* The text's own focus (not :focus-within): an open picker menu leaves the field neutral, and the
+   tray above it never takes the ring. */
+.cb-composer-field:has(.cb-composer-input:focus) {
   border-color: var(--cb-accent);
   box-shadow:
     0 0 0 3px var(--cb-focus-ring),
     var(--cb-shadow-float);
 }
 /* Without the box (`ComposerFrame bare`): a plugin's frame around the composer draws it. */
-.cb-composer[data-frame="bare"],
-.cb-composer[data-frame="bare"]:has(.cb-composer-input:focus) {
+.cb-composer[data-frame="bare"] > .cb-composer-field,
+.cb-composer[data-frame="bare"] > .cb-composer-field:has(.cb-composer-input:focus) {
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -2316,18 +2329,19 @@ button.cb-file-card:focus-visible {
   color: var(--cb-faint);
 }
 /* The token warning (§6.16.2, setup guides v2 spec §12.1): the Callout's warn line at the top of
-   the frame, never a box in it; its two buttons go under the sentence when the row is short. */
-.cb-composer > .cb-callout {
+   the field, never a box in it, space.2 in from the field's padding like the text; its two buttons
+   go under the sentence when the row is short. */
+.cb-composer-field > .cb-callout {
   flex-wrap: wrap;
   row-gap: var(--cb-space-1);
-  margin-bottom: var(--cb-space-2);
+  margin: 0 var(--cb-space-2) var(--cb-space-2);
 }
-.cb-composer > .cb-callout > .cb-callout-text {
+.cb-composer-field > .cb-callout > .cb-callout-text {
   flex: 1 1 60%;
 }
 /* Compact: the buttons always stand under the sentence (the refusal line, inline tokens spec §6). */
 @media not all and (min-width: 600px) {
-  .cb-composer > .cb-callout > .cb-callout-text {
+  .cb-composer-field > .cb-callout > .cb-callout-text {
     flex-basis: calc(100% - 12px - var(--cb-space-1));
   }
 }

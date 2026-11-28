@@ -288,7 +288,9 @@ describe("composer token warning", () => {
   it("the warning is the warn line in the composer, not a box in its box", async () => {
     wrap(<Harness sent={noop} />);
     await paste(SLACK);
-    const callout = document.querySelector('[data-part="composer"] > [data-part="callout"]');
+    // the first thing in the field, the composer's box (spec §6.16.2)
+    const callout = document.querySelector('[data-part="composer-field"] > [data-part="callout"]');
+    expect(callout?.parentElement?.firstElementChild).toBe(callout);
     expect(callout?.getAttribute("data-framed")).toBe("false");
     expect(findNestedBoxes(document.body)).toEqual([]);
   });

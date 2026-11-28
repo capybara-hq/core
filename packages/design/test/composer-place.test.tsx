@@ -9,10 +9,12 @@ import {
   type ComposerPlace,
   ComposerPlaceChip,
   DesignProvider,
+  MOBILE_SIZE_QUERY,
   type ModeMenuProps,
   type PickerProps,
 } from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
+import { parseCss, css as stylesheet } from "./css-rules";
 import { matchMediaFor } from "./width";
 
 // The composer's top strip (spec §6.16.2 "Top strip", composer menus spec §6, §7): device then
@@ -127,11 +129,11 @@ const strip = () => document.querySelector('[data-part="composer-place"]') as HT
 const full = () => document.querySelector('[data-part="composer-place-full"]') as HTMLElement;
 
 describe("the top strip", () => {
-  it("draws the device, a muted slash, then the project, above the text", () => {
+  it("draws the device then the project with no separator, above the text", () => {
     wrap(<ComposerBox {...props()} />);
     expect(strip().getAttribute("aria-label")).toBe("运行位置");
     const parts = [...full().children].map((el) => el.getAttribute("aria-label") ?? el.textContent);
-    expect(parts).toEqual(["切换设备: 开发沙盒", "/", "切换项目: billing-reconciliation-service"]);
+    expect(parts).toEqual(["切换设备: 开发沙盒", "切换项目: billing-reconciliation-service"]);
     // the long project's whole name is its tooltip
     const project = within(full()).getByRole("button", { name: /切换项目/ });
     expect(project.getAttribute("title")).toBe("billing-reconciliation-service");
@@ -468,6 +470,196 @@ describe("review fixes", () => {
     );
     expect(css).toMatch(
       /\.cb-send\.cb-btn:disabled \{\s*border-color: transparent;\s*background: var\(--cb-selected\);\s*color: var\(--cb-faint\);/,
+    );
+  });
+});
+
+// The composer frame's even inset and the place tray (spec §6.16.2, maintainer review 2026-11-28):
+// the field is the box, padded space.2 on every side; from 600 with a fine pointer the strip is a
+// tray above the field, outside its box, which the field overlaps by radius.md; the touch form
+// keeps the strip on the chip row above the pill.
+describe("the place tray and the even inset", () => {
+  const rules = [
+    ...parseCss(stylesheet("conversation.css")),
+    ...parseCss(stylesheet("conversation-page.css")),
+    ...parseCss(stylesheet("composer-menu.css")),
+  ];
+  /** The declarations of `selector` in the rules sitting under `at` (null: no at-rule), merged. */
+  const decl = (selector: string, at: string | null = null): Record<string, string> => {
+    const hits = rules.filter(
+      (r) =>
+        r.at === at &&
+        r.selector
+          .split(",")
+          .map((x) => x.trim())
+          .includes(selector),
+    );
+    if (hits.length === 0) throw new Error(`no rule for ${selector} under ${at}`);
+    return Object.assign({}, ...hits.map((r) => r.decls));
+  };
+  const field = () => document.querySelector('[data-part="composer-field"]') as HTMLElement;
+  const frame = () => document.querySelector('[data-part="composer"]') as HTMLElement;
+
+  it("draws the strip as a sibling before the field, never inside the box (1000, fine pointer)", () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(1000).matchMedia);
+    wrap(<ComposerBox {...props()} />);
+    expect(strip().parentElement).toBe(frame());
+    expect(strip().nextElementSibling).toBe(field());
+    expect(field().contains(strip())).toBe(false);
+    // the field holds the text, ＋, send and the control row
+    expect(field().contains(screen.getByRole("textbox"))).toBe(true);
+    expect(field().querySelector('[data-part="composer-bar"]')).not.toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("keeps one DOM at 390: the touch form takes the tray's ground away (CSS)", () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(390).matchMedia);
+    wrap(<ComposerBox {...props()} />);
+    expect(strip().nextElementSibling).toBe(field());
+    // the touch form: the field draws nothing and the strip is the chip row above the pill
+    expect(decl(".cb-composer-field", MOBILE_SIZE_QUERY).display).toBe("contents");
+    expect(decl(".cb-composer > .cb-composer-place", MOBILE_SIZE_QUERY)).toMatchObject({
+      "grid-row": "3",
+      padding: "0",
+      "border-radius": "0",
+      background: "transparent",
+      margin: "0 0 var(--cb-space-2)",
+    });
+  });
+
+  it("draws locked pickers in the tray as plain text with no hover and no separator", () => {
+    wrap(
+      <ComposerBox
+        {...props({
+          place: {
+            device: devicePicker({ locked: { hint: "不能换设备" } }),
+            project: projectPicker({ locked: { hint: "不能换项目" } }),
+          },
+        })}
+      />,
+    );
+    const locked = [...full().children];
+    expect(locked.map((el) => [el.tagName, el.getAttribute("data-locked")])).toEqual([
+      ["SPAN", "true"],
+      ["SPAN", "true"],
+    ]);
+    expect(full().textContent).toBe("开发沙盒billing-reconciliation-service");
+    expect(decl('.cb-picker[data-locked="true"]').color).toBe("var(--cb-muted)");
+    // the pill hover is a button's alone (`.cb-btn`): a locked span never gets it
+    const hover = rules.filter(
+      (r) => r.selector.includes(".cb-composer-place-full") && r.selector.includes(":hover"),
+    );
+    expect(hover.length).toBeGreaterThan(0);
+    for (const r of hover) expect(r.selector).toContain(".cb-picker.cb-btn:hover");
+  });
+
+  it("stands the warning line at the top of the field, under the tray", () => {
+    // the refusal line, which shares the token warning's place (the warning's own test is
+    // composer-token-warning.test.tsx)
+    wrap(
+      <ComposerBox
+        {...props({ refused: { label: "Slack", reason: "不可用", onRemove: vi.fn() } })}
+      />,
+    );
+    const callout = field().querySelector('[data-part="callout"]') as HTMLElement;
+    expect(callout.parentElement).toBe(field());
+    expect(field().firstElementChild).toBe(callout);
+    expect(
+      strip().compareDocumentPosition(callout) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("pads the field space.2 on every side and pulls no row into the padding", () => {
+    expect(decl(".cb-composer-field")).toMatchObject({
+      padding: "var(--cb-space-2)",
+      border: "1px solid var(--cb-line)",
+      "border-radius": "var(--cb-radius-md)",
+      background: "var(--cb-raised)",
+      "box-shadow": "var(--cb-shadow-float)",
+      position: "relative",
+    });
+    // the frame itself draws nothing: no border, ground, shadow or padding
+    const frameDecls = decl(".cb-composer");
+    for (const p of ["border", "background", "box-shadow", "padding"]) {
+      expect(frameDecls[p], p).toBeUndefined();
+    }
+    // no negative margin anywhere on the composer's rows (＋, the strip, the control row)
+    const pulls = rules.filter(
+      (r) =>
+        r.at === null &&
+        /\.cb-composer/.test(r.selector) &&
+        Object.entries(r.decls).some(
+          ([k, v]) => k.startsWith("margin") && v.includes("-1 * var(--cb-space"),
+        ),
+    );
+    expect(pulls.map((r) => r.selector)).toEqual([]);
+    // the focus ring is the field's alone
+    expect(decl(".cb-composer-field:has(.cb-composer-input:focus)")["border-color"]).toBe(
+      "var(--cb-accent)",
+    );
+    expect(
+      rules.some((r) => r.selector.includes(".cb-composer-place") && r.selector.includes(":focus")),
+    ).toBe(false);
+  });
+
+  it("insets the text and the token warning space.2, the text space.1 under the top", () => {
+    expect(decl(".cb-composer-box > .cb-composer-editor").margin).toBe(
+      "var(--cb-space-1) var(--cb-space-2) 0",
+    );
+    expect(
+      decl(".cb-composer-field > .cb-attachment-strip ~ .cb-composer-box > .cb-composer-editor")[
+        "margin-top"
+      ],
+    ).toBe("0");
+    expect(decl(".cb-composer-field > .cb-callout").margin).toBe(
+      "0 var(--cb-space-2) var(--cb-space-2)",
+    );
+    // the touch form keeps its own insets: the pill's text and the full-width warning line
+    expect(decl(".cb-composer-box > .cb-composer-editor", MOBILE_SIZE_QUERY).margin).toBe("0");
+    expect(decl(".cb-composer-field > .cb-callout", MOBILE_SIZE_QUERY).margin).toBe(
+      "0 0 var(--cb-space-2)",
+    );
+  });
+
+  it("draws the tray on the hover ground, radius md on top, overlapped by radius md", () => {
+    expect(decl(".cb-composer > .cb-composer-place")).toMatchObject({
+      background: "var(--cb-hover)",
+      "border-radius": "var(--cb-radius-md) var(--cb-radius-md) 0 0",
+      padding: "var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-2) + var(--cb-radius-md))",
+      margin: "0 0 calc(-1 * var(--cb-radius-md))",
+    });
+    const tray = decl(".cb-composer > .cb-composer-place");
+    expect(tray.border).toBeUndefined();
+    expect(tray["box-shadow"]).toBeUndefined();
+    // its pickers: a pill of the selected ground on hover or while open, nothing at rest
+    expect(decl(".cb-composer-place-full > .cb-picker.cb-btn")["border-radius"]).toBe(
+      "var(--cb-radius-pill)",
+    );
+    expect(
+      decl(".cb-composer-place-full > .cb-picker.cb-btn:hover:not(:disabled)").background,
+    ).toBe("var(--cb-selected)");
+    expect(
+      decl('.cb-composer-place-full > .cb-picker.cb-btn[aria-expanded="true"]').background,
+    ).toBe("var(--cb-selected)");
+    // the separator is gone; the project still gives way first
+    expect(rules.some((r) => r.selector.includes("composer-place-sep"))).toBe(false);
+    expect(decl(".cb-composer-place-full > .cb-picker + .cb-picker")["flex-shrink"]).toBe("100");
+  });
+
+  it("anchors the open menu to the frame's edges, space.2 above the tray", () => {
+    expect(decl(".cb-cmm")).toMatchObject({
+      left: "0",
+      right: "0",
+      bottom: "calc(100% + var(--cb-space-2))",
+    });
+    expect(decl(".cb-composer").position).toBe("relative");
+  });
+
+  it("sets send concentric with the pill's round end on touch (its end margin = its bottom one)", () => {
+    const send = decl(".cb-composer-box > .cb-send.cb-btn", MOBILE_SIZE_QUERY);
+    expect(send["margin-inline-end"]).toBe(send["margin-block-end"]);
+    expect(send["margin-inline-end"]).toBe(
+      "calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2 - 1px)",
     );
   });
 });

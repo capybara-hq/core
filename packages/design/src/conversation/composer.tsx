@@ -38,42 +38,57 @@ import {
   type TokenLikeSpan,
 } from "./token-like";
 
-// The composer (spec §6.16.2): the floating frame that holds the attachment strip, the editor (text
-// with inline tokens, composer inline tokens spec §2) and the control row with the pickers and send /
-// stop.
+// The composer (spec §6.16.2): the place tray above the field, the floating box that holds the token
+// warning, the attachment strip, the editor (text with inline tokens, composer inline tokens spec §2)
+// and the control row with the pickers and send / stop.
 
 /**
- * The composer box: `raised`, 1px `line`, radius `md`, `shadow-float`; accent + halo on focus.
- * `bare`: the same element and part without the box (no padding, border, ground or shadow), for a
- * plugin's frame drawn around the composer (client extensions spec §5.3).
+ * The composer (§6.16.2): what stands above the box (`top`: the open composer menu and the place
+ * tray), then the box itself, the field (`raised`, 1px `line`, radius `md`, `shadow-float`, padding
+ * `space.2`; accent + halo on focus). In the touch form the field draws nothing and its parts join
+ * the frame's grid. `bare`: the same elements and parts without the box (no padding, border, ground
+ * or shadow), for a plugin's frame drawn around the composer (client extensions spec §5.3).
  */
 export function ComposerFrame({
   busy,
   bare,
   place,
   form,
+  top,
   children,
 }: {
-  /** A send or stop is in flight: `aria-busy` for plugin CSS. */
+  /** A send or stop is in flight: `aria-busy` on the field (UI part `composer`) for plugin CSS. */
   busy?: boolean;
   bare?: boolean;
   /** The frame holds the top strip (§6.16.2): the control row takes its `place` layout. */
   place?: boolean;
   /** The reference set and catalog only: draw the medium form in a wide window. */
   form?: "medium";
+  /**
+   * Drawn before the field, outside its box: the open composer menu and the place strip, which
+   * from 600 up with a fine pointer is the tray the field overlaps.
+   */
+  top?: ReactNode;
   children?: ReactNode;
 }): JSX.Element {
   return (
     <div
       className="cb-composer"
       data-part="composer"
-      data-cap-part="composer"
       data-frame={bare ? "bare" : undefined}
       data-place={place ? "true" : undefined}
       data-form={form}
-      aria-busy={busy ? true : undefined}
     >
-      {children}
+      {top}
+      {/* the UI part `composer` is the box a theme styles: the field, never the tray above it */}
+      <div
+        className="cb-composer-field"
+        data-part="composer-field"
+        data-cap-part="composer"
+        aria-busy={busy ? true : undefined}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -316,7 +331,7 @@ export type ComposerBoxProps = {
   /** The skill's argument hint: faint ghost text after a lone skill token (state `skill`). */
   skillHint?: string;
   /**
-   * A send refused tokens of the draft (spec §3.4): one fail line at the top of the frame, where
+   * A send refused tokens of the draft (spec §3.4): one fail line at the top of the field, where
    * the token warning stands, "<label> can't be used: <reason>" with "Remove" (`onRemove` takes
    * the refused tokens out of the draft). The token warning, while it shows, stands in its place.
    */
@@ -357,8 +372,9 @@ export type ComposerBoxProps = {
   };
   /**
    * The top strip (§6.16.2 "Top strip"): where the conversation runs, the device then its project
-   * (absent when the device offers none), above the attachments and the text; a `locked` picker is
-   * static text (a conversation's). With it the control row draws no device picker
+   * (absent when the device offers none): from 600 up with a fine pointer a tray above the field,
+   * outside its box, which the field overlaps by `radius.md`; a `locked` picker is static text (a
+   * conversation's). With it the control row draws no device picker
    * (`pickers.device` is ignored), the mode button follows + and the model picker stands at the
    * end before the context meter and send; below 600 the strip is one chip opening a sheet, the
    * mode an icon button and the settings chip the model's name (model and effort only).
@@ -688,9 +704,15 @@ export function ComposerBox({
       bare={!frame}
       place={place !== undefined}
       {...(referenceForm ? { form: referenceForm } : {})}
+      top={
+        // the open menu, then the place strip (the tray above the field from 600 up with a fine
+        // pointer; the chip row above the pill in the touch form)
+        <>
+          {menu?.node ?? null}
+          {place ? <ComposerPlaceStrip {...place} /> : null}
+        </>
+      }
     >
-      {menu?.node ?? null}
-      {place ? <ComposerPlaceStrip {...place} /> : null}
       {tokenWarning ?? refusal}
       {attachments}
       {/* The text box (part composer.box): the text with + and send. In the mobile form it is the

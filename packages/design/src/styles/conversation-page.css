@@ -509,14 +509,11 @@ span.cb-title-btn {
   max-height: calc(8 * var(--cb-type-prose-line));
   overflow-y: auto;
 }
-.cb-composer > :not(.cb-composer-box, .cb-composer-bar) {
+.cb-composer-field > :not(.cb-composer-box, .cb-composer-bar) {
   grid-column: 1 / -1;
 }
-/* Rows: 1 the top strip, 2 and 3 the token warning and the attachments (placed in order), 4 the
-   text, 5 ＋ · the control row · send. Empty rows take no height (the frame has no row gap). */
-.cb-composer > .cb-composer-place {
-  grid-row: 1;
-}
+/* Rows of the field: 1 to 3 the token warning and the attachments (placed in order), 4 the text,
+   5 ＋ · the control row · send. Empty rows take no height (the field has no row gap). */
 .cb-composer-box {
   display: contents;
 }
@@ -524,11 +521,20 @@ span.cb-title-btn {
   grid-row: 4;
   grid-column: 1 / -1;
 }
-/* ＋, the control row and send: one line under the text, ＋ a space.2 into the frame's padding */
+/* The text stands space.2 in from the field's padding (16 from its edge, where the tray's and the
+   control row's labels start) and space.1 under its top; under the attachments it starts right
+   after their own space.2. */
+.cb-composer-field > .cb-composer-editor,
+.cb-composer-box > .cb-composer-editor {
+  margin: var(--cb-space-1) var(--cb-space-2) 0;
+}
+.cb-composer-field > .cb-attachment-strip ~ .cb-composer-box > .cb-composer-editor {
+  margin-top: 0;
+}
+/* ＋, the control row and send: one line under the text, ＋ and send in the field's corners */
 .cb-composer-box > .cb-composer-attach {
   grid-row: 5;
   grid-column: 1;
-  margin-left: calc(-1 * var(--cb-space-2));
 }
 .cb-composer-bar {
   grid-row: 5;
@@ -655,17 +661,27 @@ span.cb-title-btn {
 .cb-mode-button.cb-btn .cb-icon {
   flex: none;
 }
-/* The top strip (§6.16.2 "Top strip"): device / project, pulled left by space.2 like the control
- * row so the device's label lines up with the text. The project gives way first. */
+/* The top strip (§6.16.2 "Top strip"): the device then the project, side by side with no
+ * separator. The project gives way first. */
 .cb-composer-place {
   display: flex;
   align-items: center;
   min-width: 0;
-  margin: 0 0 var(--cb-space-1) calc(-1 * var(--cb-space-2));
+}
+/* From 600 with a fine pointer the strip is the tray above the field, outside its box: the
+ * `hover` ground, no border or shadow, radius md at the top, space.2 around the pickers and
+ * space.2 + radius md under them, the field overlapping its lower radius md (the touch form below
+ * puts it back on the chip row). */
+.cb-composer > .cb-composer-place {
+  margin: 0 0 calc(-1 * var(--cb-radius-md));
+  padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-2) + var(--cb-radius-md));
+  border-radius: var(--cb-radius-md) var(--cb-radius-md) 0 0;
+  background: var(--cb-hover);
 }
 .cb-composer-place-full {
   display: flex;
   align-items: center;
+  gap: var(--cb-space-1);
   min-width: 0;
 }
 .cb-composer-place-full > .cb-picker {
@@ -675,13 +691,21 @@ span.cb-title-btn {
 .cb-composer-place-full > .cb-picker[data-locked="true"] {
   overflow: hidden;
 }
-.cb-composer-place-sep ~ .cb-picker {
+.cb-composer-place-full > .cb-picker + .cb-picker {
   flex-shrink: 100;
 }
-.cb-composer-place-sep {
-  flex: none;
-  padding: 0 var(--cb-space-1);
-  color: var(--cb-muted);
+/* The tray's pickers are plain text and a chevron in ink; only a hover (or the open menu) gives
+ * one the pill of the `selected` ground, a step over the tray's `hover`. A locked one stays plain
+ * `muted` text with no hover. */
+.cb-composer-place-full > .cb-picker.cb-btn {
+  border-radius: var(--cb-radius-pill);
+}
+.cb-composer-place-full > .cb-picker.cb-btn:not(:disabled) {
+  color: var(--cb-ink);
+}
+.cb-composer-place-full > .cb-picker.cb-btn:hover:not(:disabled),
+.cb-composer-place-full > .cb-picker.cb-btn[aria-expanded="true"] {
+  background: var(--cb-selected);
 }
 /* The compact chip and its parts (shown below 600, in the touch block below). */
 .cb-composer-place-chip {
@@ -2238,25 +2262,23 @@ button.cb-property-row {
  * thread runs under it, the user's bubble sits at the end edge and the approval card's buttons
  * are 48 high. Medium and expanded with a fine pointer keep the layouts above.
  *
- * The frame is a column grid; the text box (`.cb-composer-box`, part composer.box) is the pill in
- * row 4, itself a grid of ＋, the text and send. Rows: 1 token warning, 2 attachments, 3 chip and
- * agent picker, 4 the pill, 5 quick actions, 6 the agents chip. The control row's controls take
- * their cells in the frame's grid (the bar is `display: contents`), outside the pill.
+ * The frame is a column grid and the field draws no box (`display: contents`, its parts take the
+ * frame's cells); the text box (`.cb-composer-box`, part composer.box) is the pill in row 4,
+ * itself a grid of ＋, the text and send. Rows: 1 token warning, 2 attachments, 3 the place strip
+ * (no tray), chip and agent picker, 4 the pill, 5 quick actions, 6 the agents chip. The control
+ * row's controls take their cells in the frame's grid (the bar is `display: contents`), outside
+ * the pill.
  */
 @media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   .cb-composer {
+    display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     /* no row gap: an empty row would still take it; the rows above and below the pill carry
        their own margin */
     row-gap: 0;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
   }
-  .cb-composer:has(.cb-composer-input:focus) {
-    border: 0;
-    box-shadow: none;
+  .cb-composer-field {
+    display: contents;
   }
   /* The pill. Its 1px border is inside its box: the cells inside take 1px off their edge offsets,
      so ＋, the text and send sit where they would on a borderless 60 high pill. */
@@ -2285,17 +2307,17 @@ button.cb-property-row {
       0 0 0 3px var(--cb-focus-ring),
       var(--cb-shadow-float-touch);
   }
-  .cb-composer[data-frame="bare"] > .cb-composer-box {
+  .cb-composer[data-frame="bare"] > .cb-composer-field > .cb-composer-box {
     border-color: transparent;
     background: transparent;
     box-shadow: none;
   }
-  .cb-composer > .cb-callout {
+  .cb-composer-field > .cb-callout {
     grid-row: 1;
     grid-column: 1 / -1;
-    margin-bottom: var(--cb-space-2);
+    margin: 0 0 var(--cb-space-2);
   }
-  .cb-composer > .cb-attachment-strip {
+  .cb-composer-field > .cb-attachment-strip {
     grid-row: 2;
     grid-column: 1 / -1;
     margin-bottom: var(--cb-space-2);
@@ -2307,6 +2329,7 @@ button.cb-property-row {
   .cb-composer-box > .cb-composer-editor {
     grid-row: 1;
     grid-column: 2;
+    margin: 0;
   }
   .cb-composer-box > .cb-composer-editor > .cb-composer-input {
     margin: 0;
@@ -2329,6 +2352,8 @@ button.cb-property-row {
     margin-inline-start: calc(var(--cb-space-2) - 1px);
     color: var(--cb-muted);
   }
+  /* send is concentric with the pill's round end: the same 6 (less the border) at its end as
+     under it */
   .cb-composer-box > .cb-send.cb-btn,
   .cb-composer-box > .cb-stop.cb-btn {
     grid-row: 1;
@@ -2337,7 +2362,7 @@ button.cb-property-row {
     margin-block-end: calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2 - 1px);
     width: var(--cb-touch-float);
     height: var(--cb-touch-float);
-    margin-inline-end: calc(var(--cb-space-2) - 1px);
+    margin-inline-end: calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2 - 1px);
     padding: 0;
     border-radius: var(--cb-radius-pill);
   }
@@ -2390,14 +2415,18 @@ button.cb-property-row {
   .cb-composer-bar > .cb-grow {
     display: none;
   }
-  /* The top strip (§6.16.2 compact): row 3 above the pill, the strip (or its chip) at the start,
-     the mode and the settings chip at the end; the suggestion's button goes to row 5's end. */
-  .cb-composer[data-place="true"] > .cb-composer-place {
+  /* The top strip (§6.16.2 compact): no tray, row 3 above the pill, the strip (or its chip) at
+     the start, the mode and the settings chip at the end; the suggestion's button goes to row 5's
+     end. */
+  .cb-composer > .cb-composer-place {
     grid-row: 3;
     grid-column: 1 / 3;
     justify-self: start;
     max-width: 100%;
     margin: 0 0 var(--cb-space-2);
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
   }
   .cb-composer[data-place="true"] .cb-composer-settings {
     display: flex;

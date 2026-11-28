@@ -263,9 +263,10 @@ describe("ComposerBox refusal line (inline tokens spec §1, §3.4)", () => {
     expect(screen.getByRole("button", { name: "移除" })).toBeTruthy();
   });
 
-  it("is the fail line at the top of the frame, not a box in its box", () => {
+  it("is the fail line at the top of the field, not a box in its box", () => {
     wrap(<Refused />);
-    const callout = document.querySelector('[data-part="composer"] > [data-part="callout"]');
+    const callout = document.querySelector('[data-part="composer-field"] > [data-part="callout"]');
+    expect(callout?.parentElement?.firstElementChild).toBe(callout);
     expect(callout?.getAttribute("data-framed")).toBe("false");
     expect(callout?.getAttribute("data-tone")).toBe("fail");
     expect(findNestedBoxes(document.body)).toEqual([]);
@@ -356,7 +357,10 @@ describe("ComposerBox frame", () => {
     wrap(<ComposerBox {...props()} />);
     const frame = document.querySelector('[data-part="composer"]');
     expect(frame?.getAttribute("data-frame")).toBeNull();
-    expect(frame?.getAttribute("data-cap-part")).toBe("composer");
+    // the UI part `composer` is the box, the field, never the tray above it
+    const field = frame?.querySelector(':scope > [data-part="composer-field"]');
+    expect(field?.getAttribute("data-cap-part")).toBe("composer");
+    expect(frame?.getAttribute("data-cap-part")).toBeNull();
   });
 
   it("frame={false} keeps the inputs and the composer part without the box", () => {
@@ -364,7 +368,9 @@ describe("ComposerBox frame", () => {
     const frames = document.querySelectorAll('[data-part="composer"]');
     expect(frames).toHaveLength(1);
     expect(frames[0]?.getAttribute("data-frame")).toBe("bare");
-    expect(frames[0]?.getAttribute("data-cap-part")).toBe("composer");
+    expect(
+      frames[0]?.querySelector('[data-part="composer-field"]')?.getAttribute("data-cap-part"),
+    ).toBe("composer");
     expect(
       document.querySelector(
         '[data-cap-part~="composer"] [contenteditable][data-part="composer-input"]',

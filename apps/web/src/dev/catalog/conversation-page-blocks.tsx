@@ -689,11 +689,18 @@ function composerBlocks(): ReactNode {
           referenceTouch
         />
       </Block>
-      {/* the top strip (§6.16.2 "Top strip"): open on a new conversation, locked on one */}
+      {/* the top strip (§6.16.2 "Top strip"): the tray above the field, open on a new
+          conversation, locked on one; focused, the ring wraps the field alone */}
       <Block id="composer-place">
         <PlaceComposer locked={false} />
       </Block>
       <Block id="composer-place-locked">
+        <PlaceComposer locked />
+      </Block>
+      <Block
+        id="composer-place-focus"
+        force={{ pseudo: ["focus"], selector: '[data-part="composer-input"]' }}
+      >
         <PlaceComposer locked />
       </Block>
       <RefBlock id="composer-place-medium" width={600} pad>

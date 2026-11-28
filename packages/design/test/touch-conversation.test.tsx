@@ -195,8 +195,8 @@ describe("the composer pill", () => {
 
 describe("outside touch the composer and thread keep their base rules", () => {
   const base = (sel: string) => rules.find((r) => r.at === null && r.selector === sel)?.decls;
-  it("the frame is still the box, with its border, radius and shadow", () => {
-    expect(base(".cb-composer")).toMatchObject({
+  it("the field is still the box, with its border, radius and shadow", () => {
+    expect(base(".cb-composer-field")).toMatchObject({
       display: "grid",
       border: "1px solid var(--cb-line)",
       "border-radius": "var(--cb-radius-md)",
@@ -222,9 +222,9 @@ describe("outside touch the composer and thread keep their base rules", () => {
           r.decls["grid-row"],
       )
       .map((r) => [r.selector, r.decls["grid-row"], r.decls["grid-column"]]);
-    // row 1 the top strip, 2 and 3 the token warning and the attachments, 4 the text
+    // the field's rows: 1 to 3 the token warning and the attachments, 4 the text (the top strip
+    // is the tray above the field, outside its grid)
     expect(rows).toEqual([
-      [".cb-composer > .cb-composer-place", "1", undefined],
       [".cb-composer-box > .cb-composer-editor", "4", "1 / -1"],
       [".cb-composer-box > .cb-composer-attach", "5", "1"],
       [".cb-composer-bar", "5", "2"],

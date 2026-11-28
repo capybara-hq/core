@@ -1,12 +1,13 @@
 /* ── The composer's menus: ＋, / and @ (spec §6.16.30) ── */
 
-/* As wide as the frame (over its 1px border), start-aligned, space.2 above it; the menu ground and
-   line of §6.7; the list scrolls under the height cap while the footer stays. */
+/* As wide as the frame (the field's border box), start-aligned, space.2 above it (above the place
+   tray when there is one); the menu ground and line of §6.7; the list scrolls under the height
+   cap while the footer stays. */
 .cb-cmm {
   position: absolute;
-  right: -1px;
-  bottom: calc(100% + 1px + var(--cb-space-2));
-  left: -1px;
+  right: 0;
+  bottom: calc(100% + var(--cb-space-2));
+  left: 0;
   z-index: var(--cb-z-popover);
   display: flex;
   flex-direction: column;
@@ -19,11 +20,9 @@
   color: var(--cb-ink);
   box-shadow: var(--cb-shadow-1);
 }
-/* The frame anchors the open menu: its padding box, not a grid area (an absolutely positioned
-   grid child with a placement takes its area as the containing block). */
-.cb-composer:has(> .cb-cmm) {
-  position: relative;
-}
+/* The frame (positioned) anchors the open menu: its padding box, not a grid area (in the touch
+   form's grid an absolutely positioned child with a placement takes its area as the containing
+   block). */
 .cb-composer > .cb-cmm {
   grid-area: auto;
 }

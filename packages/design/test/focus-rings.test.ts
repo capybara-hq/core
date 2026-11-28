@@ -82,7 +82,7 @@ const TEXT_ENTRY = new Set([
   ".cb-textarea:focus-within",
   ".cb-stepper:focus-within",
   ".cb-slider-input:focus",
-  ".cb-composer:has(.cb-composer-input:focus)",
+  ".cb-composer-field:has(.cb-composer-input:focus)",
   ".cb-composer-box:has(.cb-composer-input:focus)",
 ]);
 
