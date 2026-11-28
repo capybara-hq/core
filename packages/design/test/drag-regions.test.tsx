@@ -1316,3 +1316,93 @@ describe("the paper's top gutter in the desktop shell (layered shell spec §5)",
     ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-head-row) - var(--cb-space-2)))");
   });
 });
+
+describe("the band's controls take clicks (Chromium resolves app-region in DOM order)", () => {
+  // Chromium collects the app-region boxes in DOM (layout tree) order and Electron folds them
+  // into one region in that order: a drag box adds to it, a no-drag box cuts itself out of it.
+  // So a later drag filler under a no-drag control makes the control a drag area again: its click
+  // never reaches the page and a double click maximizes the window (#1120).
+  /** Every app-region rule of the design CSS, in source order. */
+  const regionRules = () =>
+    STYLES.flatMap((f) =>
+      parseCss(css(f)).flatMap((r) => {
+        const v = r.decls["-webkit-app-region"] ?? r.decls["app-region"];
+        return v === "drag" || v === "no-drag" ? [{ selector: r.selector, value: v }] : [];
+      }),
+    );
+  /** The element's own app-region by the design CSS (the last matching rule; not inherited). */
+  function appRegion(el: Element, rules: ReturnType<typeof regionRules>): string | null {
+    let value: string | null = null;
+    for (const r of rules) {
+      for (const s of selectors(r.selector)) {
+        let hit = false;
+        try {
+          hit = el.matches(s);
+        } catch {
+          // a selector jsdom cannot parse is no match
+        }
+        if (hit) value = r.value;
+      }
+    }
+    return value;
+  }
+  /**
+   * Whether the point at the target's centre drags the window, the way Chromium resolves it:
+   * the regions in DOM order, each drag box that covers the point turns it on, each no-drag box
+   * turns it off. jsdom has no layout, so every drag filler in the shell is taken to cover the
+   * point (in a band the paper's gutter and the band row's fillers lie under the field's centre).
+   */
+  function dragsAt(target: Element, root: Element): boolean {
+    const rules = regionRules();
+    let drags = false;
+    for (const el of [root, ...root.querySelectorAll("*")]) {
+      const v = appRegion(el, rules);
+      if (v === null) continue;
+      const covers = el === target || el.contains(target) || v === "drag";
+      if (covers) drags = v === "drag";
+    }
+    return drags;
+  }
+
+  it("no drag filler follows the band search field in DOM order, so the field opens the palette", () => {
+    (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
+      version: 1,
+      kind: "desktop",
+      platform: "windows",
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
+      controls: { x: 1140, y: 0, width: 140, height: 40 },
+      capabilities: {},
+      on: () => () => {},
+    };
+    document.documentElement.setAttribute("data-shell", "desktop");
+    vi.stubGlobal("matchMedia", matchMediaFor(1280).matchMedia);
+    try {
+      const commands = [{ label: "跳转", items: [{ id: "go", label: "前往", onSelect: noop }] }];
+      const { container } = render(
+        <DesignProvider locale="zh">
+          <AppShell
+            sidebar={sidebar}
+            commands={commands}
+            collapsed={false}
+            onCollapsedChange={noop}
+          >
+            <ListPage header={{ path: [{ label: "acme" }, { label: "智能体" }], title: "智能体" }}>
+              <p>rows</p>
+            </ListPage>
+          </AppShell>
+        </DesignProvider>,
+      );
+      const shellEl = container.querySelector(".cb-shell");
+      const field = container.querySelector(".cb-shell > .cb-band-search");
+      expect(shellEl).not.toBeNull();
+      expect(field).not.toBeNull();
+      // the page draws fillers that can lie in the band row (the gutter, the head's strip)
+      expect(shellEl?.querySelector(".cb-shell-gutter.cb-drag-fill")).not.toBeNull();
+      if (!shellEl || !field) return;
+      expect(dragsAt(field, shellEl)).toBe(false);
+    } finally {
+      document.documentElement.removeAttribute("data-shell");
+      (window as unknown as { capybaraShell?: unknown }).capybaraShell = undefined;
+    }
+  });
+});

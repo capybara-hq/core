@@ -532,11 +532,6 @@ export function AppShell({
             </Tooltip>
           </div>
         ) : null}
-        {/* The ground band's search field (desktop shell, maintainer decision 2026-11-28): CSS
-            shows it only in a band and band-search.tsx only where it fits. */}
-        {searchable && shellKind === "desktop" && reference === undefined ? (
-          <BandSearch onOpen={() => setPaletteOpen(true)} />
-        ) : null}
         {banner ? (
           <div className="cb-shell-banner" data-part="shell-banner">
             {banner}
@@ -619,6 +614,15 @@ export function AppShell({
             )}
           </main>
         </div>
+        {/* The ground band's search field (desktop shell, maintainer decision 2026-11-28): CSS
+            shows it only in a band and band-search.tsx only where it fits. After the content
+            column in DOM order: Chromium resolves app-region in DOM order, so a drag filler drawn
+            later (the paper's gutter, a head's filler under the field) would take its clicks
+            (#1120). The keyboard reaches it after the page, as the window's top row; ⌘K / Ctrl+K
+            opens the palette from anywhere. */}
+        {searchable && shellKind === "desktop" && reference === undefined ? (
+          <BandSearch onOpen={() => setPaletteOpen(true)} />
+        ) : null}
       </div>
       {drawer ? (
         <NavDrawer

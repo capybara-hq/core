@@ -539,7 +539,9 @@
    sidebar's search button does. Not on a conversation: its band row (path, title, panel toggles)
    is full. band-search.tsx hides it (`data-fits="false"`, still laid out to be measured) where it
    would overlap the band row's content, the sidebar or the controls; while it shows, the sidebar's
-   (or the rail's) search button gives way to it. A control: no-drag (below). */
+   (or the rail's) search button gives way to it. A control: no-drag (below), and the AppShell
+   draws it after the content column, since Chromium resolves app-region in DOM order and the
+   paper's gutter and a head's fillers lie under it (#1120). */
 .cb-band-search {
   display: none;
 }
