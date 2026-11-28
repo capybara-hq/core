@@ -16,7 +16,7 @@ import {
   type IdleFireOutcome,
   idleFireDecision,
 } from "./context/idle-compaction-rules.js";
-import type { IdleCompactionJobData } from "./idle-compaction-jobs.js";
+import type { IdleCompactionJobInput } from "./idle-compaction-jobs.js";
 import { ProviderRegistry } from "./providers.js";
 import { ACTIVE_RUN_STATUSES } from "./run-jobs.js";
 import { isLive, orgIsLive } from "./run-liveness.js";
@@ -84,7 +84,7 @@ export class IdleCompactionJob {
    * first, stopping at the first failing check, decides, and starts the run. Logs one `info` line,
    * context=IdleCompaction. A database failure throws (BullMQ retries the job within its attempts).
    */
-  async fire(data: IdleCompactionJobData, now = Date.now()): Promise<IdleFireOutcome | "started"> {
+  async fire(data: IdleCompactionJobInput, now = Date.now()): Promise<IdleFireOutcome | "started"> {
     const extra: FireLog = {};
     const outcome = await this.decide(data, now, extra);
     this.log.info("idle compaction job", {
@@ -100,37 +100,43 @@ export class IdleCompactionJob {
 
   // runs under the job's org scope (`runJob`); every org-owned row is read with that org
   private async decide(
-    data: IdleCompactionJobData,
+    data: IdleCompactionJobInput,
     now: number,
     extra: FireLog,
   ): Promise<IdleFireOutcome | "started"> {
     const t = this.kdb.db;
     const { orgId, conversationId, armedSeq } = data;
-    const known: Partial<IdleFireFacts> = {};
+    // a row owed before `mode` existed is a cache-mode job (compaction model spec §6.3, C5)
+    const cache = data.mode === "compaction_model" ? undefined : data;
+    const known: Partial<IdleFireFacts> = {
+      mode: cache === undefined ? "compaction_model" : "cache",
+    };
     const failing = (): IdleFireOutcome | undefined => {
       const d = idleFireDecision({ ...PASSING, ...known });
       return d.fire ? undefined : d.outcome;
     };
 
-    // the armed call: its lifetime (for the log) and its model (check 7)
-    const call = await t
-      .selectFrom("conversation_events")
-      .select("payload")
-      .where("conversation_id", "=", conversationId)
-      .where("seq", "=", String(data.cacheCallSeq))
-      .where("type", "=", "model_call")
-      .executeTakeFirst();
+    // cache mode: the armed call, its lifetime (for the log) and its model (check 7)
+    const call =
+      cache &&
+      (await t
+        .selectFrom("conversation_events")
+        .select("payload")
+        .where("conversation_id", "=", conversationId)
+        .where("seq", "=", String(cache.cacheCallSeq))
+        .where("type", "=", "model_call")
+        .executeTakeFirst());
     const armed = call?.payload as
       | { provider: string; model: string; request?: { cacheTtl?: number } }
       | undefined;
     const lifetime = (ttl: number | undefined) => {
-      if (ttl === undefined || extra.ttl !== undefined) return;
+      if (cache === undefined || ttl === undefined || extra.ttl !== undefined) return;
       extra.ttl = ttl;
       // the arm decision's fire time, `min(t0 + 0.9 L, expiresAt - 30 s)` with t0 = expiresAt - L
-      const t0 = data.expiresAt - ttl * 1000;
+      const t0 = cache.expiresAt - ttl * 1000;
       const runAt = Math.min(
         t0 + CACHE_FIRE_RATIO * ttl * 1000,
-        data.expiresAt - CACHE_EXPIRY_MARGIN_MS,
+        cache.expiresAt - CACHE_EXPIRY_MARGIN_MS,
       );
       extra.lateMs = now - runAt;
     };
@@ -188,9 +194,9 @@ export class IdleCompactionJob {
     outcome = failing();
     if (outcome !== undefined) return outcome;
 
-    // check 5 needs no read: the job's time against the armed call's expiry
+    // check 5 (cache mode only) needs no read: the job's time against the armed call's expiry
     known.now = now;
-    known.expiresAt = data.expiresAt;
+    if (cache) known.expiresAt = cache.expiresAt;
     outcome = failing();
     if (outcome !== undefined) return outcome;
 
@@ -222,7 +228,9 @@ export class IdleCompactionJob {
         await readSelection(t, conversationId),
       );
     let resolved = false;
-    if (definition && armed && sameModel(definition.model, armed)) {
+    // compaction-model mode: its model checks (C6) come with the compaction-model fire path;
+    // until then such a job ends `no_model` and never falls back to the cache mode
+    if (cache && definition && armed && sameModel(definition.model, armed)) {
       try {
         const { info } = await this.models.resolve(orgId, definition.model);
         lifetime(info.cache?.defaultTtl);

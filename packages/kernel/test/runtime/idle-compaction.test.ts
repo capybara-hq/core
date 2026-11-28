@@ -159,11 +159,14 @@ async function lastModelRequest(orgId: string, purpose: string): Promise<unknown
   return (res.json() as { last: Record<string, unknown> }).last["model.request"];
 }
 
+/** A cache-mode job's data (the org maps no compaction model here). */
+type CacheJobData = Extract<IdleCompactionJobData, { mode: "cache" }>;
+
 interface Armed {
   orgId: string;
   agentId: string;
   conv: string;
-  data: IdleCompactionJobData;
+  data: CacheJobData;
 }
 
 /** Posts `text` and waits for the conversation's `n`-th terminal run. */
@@ -173,7 +176,7 @@ async function turn(orgId: string, conv: string, text: string, n: number): Promi
 }
 
 /** The data of the newest owed idle compaction row of the conversation. */
-async function armedData(conv: string): Promise<IdleCompactionJobData> {
+async function armedData(conv: string): Promise<CacheJobData> {
   const rows = await db
     .selectFrom("outbox")
     .select("data")
@@ -181,7 +184,7 @@ async function armedData(conv: string): Promise<IdleCompactionJobData> {
     .orderBy("id", "desc")
     .execute();
   const data = rows
-    .map((r) => r.data as unknown as IdleCompactionJobData)
+    .map((r) => r.data as unknown as CacheJobData)
     .find((d) => d.conversationId === conv);
   if (!data) throw new Error("no idle compaction job owed");
   return data;
