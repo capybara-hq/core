@@ -192,7 +192,12 @@
         "default": "引用的项目文件已不可用。请确认它仍在项目中，移除后再试。",
         "no_project": "这个会话没有绑定设备项目，无法引用项目文件。请移除它们，或在项目中开始会话。"
       },
-      "busy": "这个会话正在运行，请等它结束后再试。"
+      "busy": "这个会话正在运行，请等它结束后再试。",
+      "reference_unavailable": {
+        "default": "引用的会话已不可用。请移除它后再试。",
+        "empty": "引用的会话还没有消息。请移除它后再试。"
+      },
+      "reference_self": "不能在会话里引用这个会话本身。请移除这个引用。"
     },
     "background_task": {
       "not_found": "这个后台任务不存在或已被清理。",
@@ -1551,7 +1556,7 @@
     "attachments": "附件",
     "removeAttachment": "移除 {name}",
     "attachLimit": "每条消息最多 {max} 个附件。",
-    "referencesNeedText": "引用资源或项目文件时，请写一句消息再发送。",
+    "referencesNeedText": "引用资源、项目文件或会话时，请写一句消息再发送。",
     "projectFileMissing": "{path} 已不在项目中，请移除或重新选择。",
     "noInvocable": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中，才能用 / 调用。",
     "noInvocableAction": "去选择技能",
@@ -1820,6 +1825,9 @@
       "library": "文件库",
       "recentFiles": "最近文件",
       "matchingFiles": "匹配的文件",
+      "conversations": "会话",
+      "untitledConversation": "未命名会话",
+      "conversationLimit": "每条消息最多引用 {max} 个会话",
       "fileOrigin": {
         "upload": "{date} 上传",
         "delivered": "{date} 交付",
@@ -1827,8 +1835,9 @@
       },
       "fileByAgent": "{agent} {how}",
       "noFiles": "没有匹配的文件",
-      "noFilesOrResources": "没有匹配的文件或资源",
+      "noFilesOrResources": "没有匹配的文件、会话或资源",
       "libraryFailed": "文件库读取失败：{reason}",
+      "conversationsFailed": "会话读取失败：{reason}",
       "resourcesFailed": "连接器资源读取失败：{reason}",
       "resources": "连接器资源",
       "projectFiles": "项目文件",

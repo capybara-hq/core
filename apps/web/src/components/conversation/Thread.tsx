@@ -757,6 +757,16 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
               downloadable: false,
             }),
           ),
+          // referenced conversations: link chips to their pages (a gone one opens the route's
+          // not-found or archived page); an empty title draws "Untitled conversation"
+          ...(e.conversationRefs ?? []).map(
+            (c): BubbleAttachment => ({
+              id: `conversation:${c.id}`,
+              kind: "conversation",
+              name: c.title ?? "",
+              href: `/chat/${encodeURIComponent(c.id)}`,
+            }),
+          ),
           ...e.attachments.map(
             (a): BubbleAttachment => ({
               id: `@${a.appId}:${a.uri}`,

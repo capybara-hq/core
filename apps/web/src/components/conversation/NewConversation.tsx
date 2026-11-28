@@ -46,6 +46,7 @@ import {
   type ComposerMessage,
   missingProjectFiles,
   newClientMessageId,
+  refusedConversationRefs,
 } from "./ComposerBar";
 import {
   type FirstMessageAttempt,
@@ -266,10 +267,18 @@ export function useNewConversationPage(
       if (m) {
         pending.drop(attempt.clientMessageId);
         setBlocked(false);
-        // the next composer marks the refused project files (this one is gone with the remount)
+        // the next composer marks the refused project files and conversations (this one is gone
+        // with the remount)
         const missing = missingProjectFiles(e, m.draft?.projectFiles ?? []);
+        const refusedRefs = refusedConversationRefs(e, m.draft?.conversationRefs ?? []);
         const draft =
-          m.draft !== undefined && missing.length > 0 ? { ...m.draft, missing } : m.draft;
+          m.draft !== undefined && (missing.length > 0 || refusedRefs.length > 0)
+            ? {
+                ...m.draft,
+                ...(missing.length > 0 ? { missing } : {}),
+                ...(refusedRefs.length > 0 ? { refusedRefs } : {}),
+              }
+            : m.draft;
         setRestore((r) => ({ n: r.n + 1, ...(draft !== undefined ? { draft } : {}) }));
       }
       return { ok: false, error: e };
@@ -291,6 +300,7 @@ export function useNewConversationPage(
         ...(m.attachments !== undefined ? { attachments: m.attachments } : {}),
         ...(m.files !== undefined ? { files: m.files } : {}),
         ...(m.projectFiles !== undefined ? { projectFiles: m.projectFiles } : {}),
+        ...(m.conversationRefs !== undefined ? { conversationRefs: m.conversationRefs } : {}),
         ...(m.skill !== undefined ? { skill: m.skill } : {}),
         ...selection.pending,
       },

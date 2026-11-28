@@ -622,6 +622,60 @@ describe("buildTimeline", () => {
     );
   });
 
+  it("a message referencing conversations alone keeps content[0] as its text and names them", () => {
+    const quote = (id: string) => ({
+      type: "text",
+      text: `Referenced conversation: "Plan" (id ${id}; another conversation of this person) ...`,
+    });
+    const out = buildTimeline(
+      [
+        user(1, "compare", {
+          content: [{ type: "text", text: "compare" }, quote("c2"), quote("c3")],
+          conversationRefs: [
+            { id: "c2", title: "Plan", source: "summary", upToSeq: 40 },
+            { id: "c3", title: null, source: "excerpt", upToSeq: 7 },
+          ],
+        }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(out[0]).toMatchObject({
+      kind: "user",
+      text: "compare",
+      conversationRefs: [
+        { id: "c2", title: "Plan" },
+        { id: "c3", title: null },
+      ],
+    });
+    expect(buildTimeline([user(1, "hi")], [], new Map(), "en")[0]).not.toHaveProperty(
+      "conversationRefs",
+    );
+  });
+
+  it("Retry of a failed message repeats its referenced conversations", () => {
+    const out = buildTimeline(
+      [
+        user(1, "compare", {
+          content: [
+            { type: "text", text: "compare" },
+            { type: "text", text: "Referenced conversation: ..." },
+          ],
+          conversationRefs: [{ id: "c2", title: "Plan", source: "excerpt", upToSeq: 3 }],
+        }),
+        ev(2, "run_failed", { error: { code: "model.timeout", message: "x" } }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(out[1]).toMatchObject({
+      status: "failed",
+      retry: { seq: 1, text: "compare", conversationRefs: ["c2"] },
+    });
+  });
+
   describe("a manual compact run draws no run row, only its outcome (maintainer decision 2026-11-28)", () => {
     const compactRun = (...rest: ReturnType<typeof ev>[]) =>
       buildTimeline(

@@ -153,6 +153,8 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
     [`GET ${ORG}/connectors`]: () => json(200, CONNECTORS),
     // no library files unless a test lists some (the `@` menu then shows resources alone)
     [`GET ${LIBRARY}`]: () => json(200, { files: [], next: null }),
+    // no other conversations (the `@` menu's conversations group stays away)
+    [`GET ${ORG}/conversations`]: () => json(200, { conversations: [], next: null }),
     [`GET ${RESOURCES}`]: (c) => {
       const q = new URL(c.url, "http://x").searchParams.get("query") ?? "";
       return json(200, {

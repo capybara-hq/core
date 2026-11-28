@@ -129,6 +129,29 @@ export const drawerRecentQuery = (orgId: string) =>
     freshness: "live",
   });
 
+/**
+ * How many conversations the composer's `@` search reads: one more than it shows, since the
+ * conversation being written in is dropped.
+ */
+export const CONVERSATION_MENTION_LIMIT = 6;
+
+/**
+ * The composer `@` menu's conversations group (@ conversations spec §3): my newest conversations whose
+ * title contains `q` (all of them, newest first, for a blank `q`), at most
+ * {@link CONVERSATION_MENTION_LIMIT}. Under the list prefix, so a rename or a new conversation
+ * refreshes it.
+ */
+export const conversationMentionQuery = (orgId: string, q: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversationList(JSON.stringify(["mention", q.trim()])),
+    fn: () =>
+      listConversations(orgId, {
+        limit: CONVERSATION_MENTION_LIMIT,
+        ...(q.trim() !== "" ? { q } : {}),
+      }),
+    freshness: "live",
+  });
+
 /** The inbox entry's count. */
 export const inboxCountQuery = (orgId: string) =>
   defineQuery<PendingCount>({
