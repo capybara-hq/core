@@ -247,6 +247,7 @@
       "scope_not_allowed": "This approval can only be allowed once.",
       "inputs_invalid": "Some entered values are invalid.",
       "input_leaked": "This value appeared in the conversation, so it counts as leaked. Create a new one at the provider and enter that.",
+      "loopback_unavailable": "This device cannot open a local port to the browser now.",
       "inputs_not_expected": "This approval does not take entered values."
     },
     "question": {

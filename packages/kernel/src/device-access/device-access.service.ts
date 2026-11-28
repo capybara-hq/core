@@ -42,18 +42,8 @@ import {
   type LoopbackGrantKey,
   type LoopbackGrantRow,
   LoopbackGrants,
-  loopbackRefusal,
 } from "../sandbox/loopback-grants.js";
-import {
-  type PermissionAvailability,
-  runtimeReportVerdict,
-} from "../sandbox/permission-availability.js";
-import { PermissionFacts } from "../sandbox/permission-facts.js";
 import { DeviceProviders } from "../sandbox/providers.js";
-import {
-  escalationCeilingWhy,
-  escalationRuntimeWhy,
-} from "../sandbox/review/permission-candidate.js";
 import { CommandReviewService, LOOPBACK_UNATTENDED_WHY } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
 import { mapSandboxError } from "../tools/builtins/sandbox/common.js";
@@ -202,9 +192,10 @@ export class DeviceAccessService {
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "current">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(LoopbackGrants)
-    private readonly loopback: Pick<LoopbackGrants, "grantIn" | "revoke" | "liveForRoot">,
-    @Inject(PermissionFacts)
-    private readonly facts: Pick<PermissionFacts, "deviceSandboxFacts">,
+    private readonly loopback: Pick<
+      LoopbackGrants,
+      "grantIn" | "revoke" | "liveForRoot" | "refusalNow"
+    >,
   ) {}
 
   private get db() {
@@ -594,7 +585,7 @@ export class DeviceAccessService {
    * Grants the scope conversation's root a local port of its device for one service (the owner's
    * click in the panel, source `owner-panel`): owner only, refused with `loopback_unavailable`
    * when the device's outside-sandbox ceilings or its provider do not allow it now
-   * ({@link loopbackRefusal}). The record is written in its own transaction
+   * (`loopbackRefusal`). The record is written in its own transaction
    * (`LoopbackGrants.grantIn`, which owes the refresh); the running service then gets the live set
    * at once, best effort (the owed refresh job is the backstop).
    */
@@ -617,24 +608,9 @@ export class DeviceAccessService {
     // the kernel's own record of the tree's origin: an automation's conversation, or a run of an
     // automation active in it now, has no one to grant a port (the ask's unattended refusal)
     if (await this.unattendedTree(d)) throw unavailable(LOOPBACK_UNATTENDED_WHY);
-    const facts = await this.facts.deviceSandboxFacts(d.orgId, d.deviceId);
-    // the escalation refusal previewCall gives an attended call: the runtime cannot run anything
-    // outside its sandbox now, else the device's outside-sandbox ceiling, in the same words
-    const runtime = runtimeWhy(facts.availability);
-    const escalation =
-      runtime !== null
-        ? escalationRuntimeWhy(runtime)
-        : facts.box.outsideSandbox
-          ? null
-          : escalationCeilingWhy({
-              layer: facts.box.layer.outsideSandbox,
-              boundary: facts.box.boundary,
-              description: facts.description,
-              changeHint: facts.changeHint,
-            });
-    // the ceilings are read before the grant's transaction: a ceiling switched off meanwhile owes
-    // a refresh whose job revokes the grant (`LoopbackGrants.refresh`), so the window is bounded
-    const why = loopbackRefusal(facts.box, facts.support, escalation);
+    // the ceilings previewCall gives an attended call, read before the grant's transaction
+    // (`LoopbackGrants.refusalNow`: a ceiling switched off meanwhile is revoked by the refresh)
+    const why = await this.loopback.refusalNow(d.orgId, d.deviceId);
     if (why !== null) throw unavailable(why);
     let row: LoopbackGrantRow;
     try {
@@ -1078,18 +1054,6 @@ export class DeviceAccessService {
   private rootOf(conversationId: string): Promise<string> {
     return rootConversationOf(this.db, conversationId);
   }
-}
-
-/**
- * Why the device's runtime cannot run anything outside its sandbox now, or null: a runtime that
- * cannot enforce its sandbox (`unsupported`, or a report whose verdict refuses). A device not
- * started yet (`unprobed`) is not refused: the grant reaches it with its next start, where its
- * provider's support is checked again.
- */
-function runtimeWhy(availability: PermissionAvailability): string | null {
-  if (availability.state === "unsupported") return availability.reason;
-  if (availability.state === "supported") return runtimeReportVerdict(availability.report);
-  return null;
 }
 
 /** A grant record as the extension sees it. */

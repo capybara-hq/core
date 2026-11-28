@@ -104,8 +104,11 @@ export interface ReviewRecord {
    * by itself (approval-only profiles design). Absent on a denial.
    */
   decisionSource?: "scope" | "human" | "review-model" | "full-access" | "task-grant";
-  /** The boundary crossing the allow covered (absent when the call crossed nothing). */
-  crossing?: "directory" | "host" | "outside-sandbox" | "sensitive";
+  /**
+   * The boundary crossing the allow covered (absent when the call crossed nothing); a loopback
+   * port grant is recorded by its own review event, never shown on the row.
+   */
+  crossing?: "directory" | "host" | "outside-sandbox" | "sensitive" | "loopback-port";
 }
 
 /**

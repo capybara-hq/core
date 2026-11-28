@@ -229,6 +229,10 @@ export const loopbackAskReason = (port: number, database: boolean): string =>
 /** The one entry the tool pipeline uses. */
 export interface CommandReview {
   review(input: ReviewInput & ReviewCall): Promise<ReviewVerdict>;
+  /** A device service's loopback port ask ({@link CommandReviewService.reviewLoopbackPort}). */
+  reviewLoopbackPort?(
+    input: LoopbackPortReviewInput,
+  ): Promise<ReviewVerdict & { approver: PermissionApprover }>;
 }
 
 /** The reasons the service itself answers with (the rule table's own reasons come from its hits). */

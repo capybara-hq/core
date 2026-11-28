@@ -31,7 +31,9 @@ import {
   rowOf,
 } from "./loopback-grant-records.js";
 import { LoopbackLivePorts } from "./loopback-live-ports.js";
+import { type PermissionAvailability, runtimeReportVerdict } from "./permission-availability.js";
 import { PermissionFacts } from "./permission-facts.js";
+import { escalationCeilingWhy, escalationRuntimeWhy } from "./review/permission-candidate.js";
 
 // the constants, types and plain functions live in a leaf module (no services imported), so
 // conversation deletion and ceiling writes import them without an import cycle
@@ -265,6 +267,31 @@ export class LoopbackGrants {
   }
 
   /**
+   * Why a loopback grant on the device is refused now for an attended decision (a person's click
+   * or approval; an unattended run is refused before), in the note's words ({@link loopbackRefusal});
+   * null when grantable. The escalation refusal is previewCall's for an attended call: the runtime
+   * cannot run anything outside its sandbox now, else the device's outside-sandbox ceiling. Read
+   * outside the grant's transaction: a ceiling switched off meanwhile owes a refresh whose job
+   * revokes the grant ({@link refresh}), so the window is bounded.
+   */
+  async refusalNow(orgId: string, deviceId: string): Promise<string | null> {
+    const facts = await this.facts.deviceSandboxFacts(orgId, deviceId);
+    const runtime = runtimeWhy(facts.availability);
+    const escalation =
+      runtime !== null
+        ? escalationRuntimeWhy(runtime)
+        : facts.box.outsideSandbox
+          ? null
+          : escalationCeilingWhy({
+              layer: facts.box.layer.outsideSandbox,
+              boundary: facts.box.boundary,
+              description: facts.description,
+              changeHint: facts.changeHint,
+            });
+    return loopbackRefusal(facts.box, facts.support, escalation);
+  }
+
+  /**
    * The refresh job. First it revokes the (device, service)'s live grants (reason
    * `outside-sandbox-off`, audited) when the device refuses loopback grants now: a ceiling layer
    * keeps running outside the sandbox off, or the provider's known support lacks
@@ -367,4 +394,11 @@ export class LoopbackGrants {
     await endedGrants(this.db.db, this.outbox, rows, "expired", null);
     return rows.length;
   }
+}
+
+/** Why the device's runtime cannot run anything outside its sandbox now; null when it can. */
+function runtimeWhy(availability: PermissionAvailability): string | null {
+  if (availability.state === "unsupported") return availability.reason;
+  if (availability.state === "supported") return runtimeReportVerdict(availability.report);
+  return null;
 }

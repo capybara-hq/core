@@ -247,6 +247,7 @@
       "scope_not_allowed": "此审批只能允许本次。",
       "inputs_invalid": "填写的内容有误。",
       "input_leaked": "这个值在对话里出现过，视为已泄露。请到服务商那里新建一个再填写。",
+      "loopback_unavailable": "这台设备现在不能向浏览器开放本机端口。",
       "inputs_not_expected": "这项审批不需要填写内容。"
     },
     "question": {
