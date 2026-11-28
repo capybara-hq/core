@@ -6830,6 +6830,7 @@
       "follow": "跟随浏览器"
     },
     "idleCompaction": {
+      "title": "对话",
       "label": "空闲时压缩我的对话",
       "orgOff": "组织已关闭"
     }

@@ -6842,6 +6842,7 @@
       "follow": "Follow the browser"
     },
     "idleCompaction": {
+      "title": "Conversations",
       "label": "Compact my conversations while I'm away",
       "orgOff": "Off in your organization"
     }

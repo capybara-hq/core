@@ -7,6 +7,7 @@ import { timeZoneOptions } from "../src/lib/account-preferences";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
 import { openSelect, optionOf, pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -124,7 +125,7 @@ describe("/account/preferences: idle compaction", () => {
       },
     });
     await renderRouteWithCache("/account/preferences", lastStubRoutes());
-    const section = await sectionOf(m.label);
+    const section = await sectionOf(m.title);
     const user = userEvent.setup();
     const toggle = within(section).getByRole("switch", { name: m.label });
     expect(toggle.getAttribute("aria-checked")).toBe("true");
@@ -154,8 +155,46 @@ describe("/account/preferences: idle compaction", () => {
         }),
     });
     await renderRouteWithCache("/account/preferences", lastStubRoutes(), { locale });
-    const section = await sectionOf(m.label);
+    const section = await sectionOf(m.title);
     await vi.waitFor(() => expect(within(section).queryByText(m.orgOff)).not.toBeNull());
     expect(within(section).queryByRole("switch")).toBeNull();
+  });
+  const guest = { ...ME, memberships: [{ ...ME.memberships[0], role: "guest" as const }] };
+
+  it("keeps the switch disabled while the org setting loads, then enables it", async () => {
+    const m = en.preferences.idleCompaction;
+    let release: (r: Response) => void = () => {};
+    api({
+      [`GET ${PREFS}`]: () => json(200, { timeZone: null, theme: null, idleCompaction: null }),
+      [`GET ${BASE}/settings`]: () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    });
+    await renderRouteWithCache("/account/preferences", lastStubRoutes(), { me: guest });
+    const section = await sectionOf(m.title);
+    const toggle = within(section).getByRole("switch", { name: m.label });
+    expect(toggle.hasAttribute("disabled")).toBe(true);
+    release(json(200, { settings: {}, deployment: { compaction: {} } }));
+    await vi.waitFor(() =>
+      expect(within(section).getByRole("switch", { name: m.label }).hasAttribute("disabled")).toBe(
+        false,
+      ),
+    );
+  });
+
+  it("leaves the switch editable when the viewer may not read the org settings", async () => {
+    const m = en.preferences.idleCompaction;
+    api({
+      [`GET ${PREFS}`]: () => json(200, { timeZone: null, theme: null, idleCompaction: null }),
+      [`GET ${BASE}/settings`]: () => json(403, { error: { code: "forbidden", message: "no" } }),
+    });
+    await renderRouteWithCache("/account/preferences", lastStubRoutes(), { me: guest });
+    const section = await sectionOf(m.title);
+    await vi.waitFor(() =>
+      expect(within(section).getByRole("switch", { name: m.label }).hasAttribute("disabled")).toBe(
+        false,
+      ),
+    );
   });
 });

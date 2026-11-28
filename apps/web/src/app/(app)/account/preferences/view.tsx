@@ -77,13 +77,16 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
     retryOnMount: retryOnMountOf(tq.queryKey),
   }).data;
   const sq = orgSettingsQuery(orgId ?? "");
-  const orgSettings = useQuery({
+  const settingsRead = useQuery({
     ...sq,
     enabled: orgId !== null,
     retryOnMount: retryOnMountOf(sq.queryKey),
-  }).data;
-  // the org's effective switch: its override over the platform's; unknown while it loads or
-  // outside an org, which leaves the personal switch editable (the kernel enforces the org's)
+  });
+  const orgSettings = settingsRead.data;
+  // the switch waits for the org's answer; with no org, or when the read fails (a guest may not
+  // read it), it stays editable: the kernel enforces the org's setting anyway
+  const orgSettingsPending = orgId !== null && settingsRead.isPending;
+  // the org's effective switch: its override over the platform's
   const orgIdleOff =
     orgSettings !== undefined &&
     effectiveCompaction(
@@ -124,7 +127,7 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
         />
         <FormSection
           id="idle-compaction"
-          title={t("idleCompaction.label")}
+          title={t("idleCompaction.title")}
           loading={{ fields: [{ control: "switch" }] }}
         />
       </SettingsPage>
@@ -197,7 +200,7 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
           />
         </Field>
       </FormSection>
-      <FormSection id="idle-compaction" title={t("idleCompaction.label")}>
+      <FormSection id="idle-compaction" title={t("idleCompaction.title")}>
         {orgIdleOff ? (
           <Text variant="prose" tone="muted">
             {t("idleCompaction.orgOff")}
@@ -206,6 +209,7 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
           <SwitchField
             label={t("idleCompaction.label")}
             checked={idle !== "off"}
+            disabled={orgSettingsPending}
             onChange={(on) => setIdleDraft(on ? null : "off")}
           />
         )}
