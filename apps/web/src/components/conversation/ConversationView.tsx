@@ -87,7 +87,7 @@ import { PlanningBlock, Thread, type ThreadProps } from "./Thread";
 import { useBackgroundLive } from "./useBackgroundLive";
 import { type SendResult, useConversation } from "./useConversation";
 import { useRootPermissionSubscription } from "./useRootPermissionSubscription";
-import { lockedDevicePicker, useSelection } from "./useSelection";
+import { lockedDevicePicker, lockedProjectPicker, useSelection } from "./useSelection";
 
 /**
  * "Turn N · <elapsed> elapsed" in the properties panel's Context section (layered shell spec §6):
@@ -244,14 +244,20 @@ export function useConversationPage(
     conv.conversation?.deviceId ?? device.data?.id,
     device.data,
     deviceName,
-    conv.conversation?.project?.name,
   );
+  // the project it is bound to, after the device in the top strip (composer menus spec §6)
+  const projectPicker = devicePicker
+    ? lockedProjectPicker(
+        { label: t("projectGroup"), hint: t("projectLocked") },
+        conv.conversation?.project?.name,
+      )
+    : undefined;
   if (
-    devicePicker?.locked &&
+    projectPicker?.locked &&
     conv.conversation?.projectState &&
     "unavailable" in conv.conversation.projectState
   ) {
-    devicePicker.locked.warning = {
+    projectPicker.locked.warning = {
       label: t("project.composerUnavailable"),
       onInspect: inspectProject,
     };
@@ -619,8 +625,15 @@ export function useConversationPage(
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
           onSend={send}
           // no agent here: the title bar's path names it (issue U)
+          {...(devicePicker
+            ? {
+                place: {
+                  device: devicePicker,
+                  ...(projectPicker ? { project: projectPicker } : {}),
+                },
+              }
+            : {})}
           pickers={{
-            ...(devicePicker ? { device: devicePicker } : {}),
             ...(permissionPicker ? { permission: permissionPicker } : {}),
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),

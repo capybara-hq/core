@@ -1634,9 +1634,11 @@
     "deviceNote": "Fixed once the first message is sent",
     "noDevice": "No device",
     "deviceOffline": "Your local devices are offline, so this conversation starts without a device. Start capybara-device on the machine to use it.",
-    "deviceLocked": "A conversation keeps its device",
+    "deviceLocked": "A conversation keeps its device after the first message",
+    "projectLocked": "A conversation keeps its project after the first message",
     "projectGroup": "Project",
     "freeMode": "Free mode",
+    "projectsLoading": "Reading projects…",
     "project": {
       "bound": "Project {name} · {path}",
       "loaded": "Project {name} · {path} · {file} loaded",
@@ -1823,6 +1825,19 @@
     "composerMenu": {
       "add": "Add",
       "upload": "Upload files",
+      "library": "File library",
+      "recentFiles": "Recent files",
+      "matchingFiles": "Matching files",
+      "fileOrigin": {
+        "upload": "Uploaded {date}",
+        "delivered": "Delivered {date}",
+        "generated": "Generated {date}"
+      },
+      "fileByAgent": "{agent} · {how}",
+      "noFiles": "No matching files",
+      "noFilesOrResources": "No matching files or resources",
+      "libraryFailed": "The file library could not be read: {reason}",
+      "resourcesFailed": "Connector resources could not be read: {reason}",
       "resources": "Connector resources",
       "projectFiles": "Project files",
       "projectFilesHint": "Reference files of the project {project} without uploading them",

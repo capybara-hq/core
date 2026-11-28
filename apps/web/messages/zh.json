@@ -1634,9 +1634,11 @@
     "deviceNote": "发出第一条消息后不能更换",
     "noDevice": "不用设备",
     "deviceOffline": "你的本地设备都已离线，本对话将在没有设备的情况下开始。在机器上启动 capybara-device 后即可使用设备。",
-    "deviceLocked": "对话开始后设备不再更换",
+    "deviceLocked": "发送第一条消息后不能再换设备",
+    "projectLocked": "发送第一条消息后不能再换项目",
     "projectGroup": "项目",
     "freeMode": "自由模式",
+    "projectsLoading": "正在读取项目…",
     "project": {
       "bound": "项目 {name} · {path}",
       "loaded": "项目 {name} · {path} · 已读取 {file}",
@@ -1811,6 +1813,19 @@
     "composerMenu": {
       "add": "添加",
       "upload": "上传文件",
+      "library": "文件库",
+      "recentFiles": "最近文件",
+      "matchingFiles": "匹配的文件",
+      "fileOrigin": {
+        "upload": "{date} 上传",
+        "delivered": "{date} 交付",
+        "generated": "{date} 生成"
+      },
+      "fileByAgent": "{agent} {how}",
+      "noFiles": "没有匹配的文件",
+      "noFilesOrResources": "没有匹配的文件或资源",
+      "libraryFailed": "文件库读取失败：{reason}",
+      "resourcesFailed": "连接器资源读取失败：{reason}",
       "resources": "连接器资源",
       "projectFiles": "项目文件",
       "projectFilesHint": "引用项目 {project} 中的文件，不上传",

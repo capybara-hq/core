@@ -10,15 +10,18 @@ import {
   type ComposerMenuItem,
   type ComposerMenuKind,
   type ComposerMenuProps,
+  type ComposerPlace,
   Dialog,
   Field,
   FileDrop,
+  formatDateTime,
   Input,
   isTouchPointer,
   type PickerProps,
   Stack,
   typeBadge,
   useComposerMenu,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -47,12 +50,14 @@ import {
 } from "../../lib/connectors";
 import type { MessageInput } from "../../lib/conversations";
 import { focusWhenPossible } from "../../lib/deferred-focus";
+import type { LibraryFileView } from "../../lib/library-files";
 import {
   connectorPromptsQuery,
   connectorResourcesQuery,
   connectorsQuery,
   invocableSkillsQuery,
 } from "../../lib/query/conversation";
+import { libraryFileSearchQuery } from "../../lib/query/library";
 import { useAppMutation } from "../../lib/query/mutation";
 import {
   findInvocable,
@@ -154,17 +159,22 @@ export const promptCommand = (p: Pick<ConnectorPrompt, "connectorSlug" | "name">
  * The open composer menu (spec 2026-11-28 composer menus §1–§4): its kind; where its trigger
  * (`/` or `@`) stands in the text and where the query typed after it ends (the caret at the last
  * edit), or `at: null` for a menu opened without a trigger (+, or Skills over a draft with text),
- * whose query is `q` (the compact sheet's search field); and what an `@` menu lists.
+ * whose query is `q` (the compact sheet's search field); and what an `@` menu lists: everything
+ * (absent), the library's files only (`"files"`, + → File library), the connector resources only
+ * (`"resources"`), or one connector's resources.
  */
 type MenuState = {
   kind: ComposerMenuKind;
   at: number | null;
   end: number;
   q: string;
-  scope?: "resources" | { connectorId: string };
+  scope?: "files" | "resources" | { connectorId: string };
 };
 
-/** How long the `@` query rests before the kernel is asked (each text is its own cache entry). */
+/**
+ * How long the `@` query rests before the kernel is asked (each text is its own cache entry, for
+ * the resources and the library files alike).
+ */
 const RESOURCE_SEARCH_DELAY_MS = 200;
 
 /** At most this many `@` rows are drawn (the kernel's matches, or one connector's of them). */
@@ -317,6 +327,7 @@ export function ComposerBar({
   stop,
   onSend,
   pickers,
+  place,
   quickActions,
   agents,
   context,
@@ -353,12 +364,16 @@ export function ComposerBar({
   /** The agent picker is absent on the new conversation page (its agents row picks). */
   pickers: {
     agent?: PickerProps;
-    device?: PickerProps;
-    /** The conversation's permission profile, after the device (design slot order). */
+    /** The conversation's permission profile (design slot order). */
     permission?: PickerProps;
     model: PickerProps;
     effort?: PickerProps;
   };
+  /**
+   * The top strip (composer menus spec §6, §7): the device, then its project (absent when the
+   * device offers none); both locked on an existing conversation. Absent without a device choice.
+   */
+  place?: ComposerPlace | undefined;
   /** The selected agent's quick actions (`QuickActions`), after the effort picker. */
   quickActions?: ReactNode;
   /** The agent map's entry (`AgentsChip`, AC3), after the quick actions; a conversation's only. */
@@ -553,6 +568,8 @@ export function ComposerBar({
           f.file && fileContentType(f.file).startsWith("image/")
             ? ("image" as const)
             : ("file" as const),
+        // a library file has no local blob: its chip shows the type badge
+        ...(f.library ? { type: typeBadge(f.name, f.contentType ?? "") } : {}),
       }));
     // the chip, else a typed `/name args` naming a listed skill (spec §3.2)
     let invoke = skill !== null ? invokeName(skill) : undefined;
@@ -849,16 +866,36 @@ export function ComposerBar({
   if (!composingNow) heldAtQuery.current = liveAtQuery;
   const atQuery = heldAtQuery.current;
   const searched = useDebounced(atQuery, RESOURCE_SEARCH_DELAY_MS);
+  // What the open `@` menu lists (its scope): the library's files, the connector resources.
+  const atScope = menu?.kind === "at" ? menu.scope : undefined;
+  const showFiles = menu?.kind === "at" && (atScope === undefined || atScope === "files");
+  const showResources = menu?.kind === "at" && atScope !== "files";
   const resourcesQ = useQuery({
     ...connectorResourcesQuery(orgId, searched),
-    enabled: menu?.kind === "at",
+    enabled: showResources,
     placeholderData: keepPreviousData,
   });
   const resources = resourcesQ.data;
+  // The library's files matching the same rested query (composer menus §4), their own cache entry.
+  const filesQ = useQuery({
+    ...libraryFileSearchQuery(orgId, searched),
+    enabled: showFiles,
+    placeholderData: keepPreviousData,
+  });
+  // The query the shown files answer (placeholder rows are an earlier query's): it names the group.
+  const [filesFor, setFilesFor] = useState("");
+  const filesSettled = filesQ.data !== undefined && !filesQ.isPlaceholderData;
+  useEffect(() => {
+    if (filesSettled) setFilesFor(searched);
+  }, [filesSettled, searched]);
+  const timeZone = useTimeZone();
   // The rows are an earlier query's (the query has not rested yet, or its answer is on its way):
   // the menu filters them by the query itself, so ↵ never attaches a row the query no longer
   // matches.
-  const staleResources = searched !== atQuery || resourcesQ.isPlaceholderData;
+  const staleResources =
+    searched !== atQuery ||
+    (showResources && resourcesQ.isPlaceholderData) ||
+    (showFiles && filesQ.isPlaceholderData);
   const connectorById = new Map<string, ConnectorSummary>(
     (connectorList ?? []).map((c) => [c.id, c]),
   );
@@ -969,13 +1006,62 @@ export function ComposerBar({
     ...unavailableGroup(prompts?.unavailable),
   ];
 
-  /** The `@` menu: the kernel's matches grouped by connector (one connector's when scoped). */
+  /** A library file's muted line: when it came and how ("Research assistant, generated 2026-11-20"). */
+  const fileDescription = (f: LibraryFileView): string => {
+    const how = t(`composerMenu.fileOrigin.${f.origin}`, {
+      date: formatDateTime(f.createdAt, "full", timeZone).slice(0, 10),
+    });
+    return f.origin !== "upload" && f.agentName !== undefined && f.agentName !== ""
+      ? t("composerMenu.fileByAgent", { agent: f.agentName, how })
+      : how;
+  };
+
+  /** The `@` menu's files group: Recent files for the empty query, else Matching files. */
+  const filesGroup = (): ComposerMenuGroup[] => {
+    const list = filesQ.data?.files ?? [];
+    if (list.length === 0) return [];
+    return [
+      {
+        id: "files",
+        label: filesFor === "" ? t("composerMenu.recentFiles") : t("composerMenu.matchingFiles"),
+        items: list.map(
+          (f): ComposerMenuItem => ({
+            id: f.id,
+            label: f.name,
+            file: { name: f.name },
+            // without storage no file can be sent: the rows say why, disabled
+            ...(drafts.limits.available
+              ? { description: fileDescription(f) }
+              : { disabled: true, description: t("filesUnavailable") }),
+            onSelect: () => {
+              picked();
+              dismissSuggestion();
+              drafts.addLibrary({
+                id: f.id,
+                name: f.name,
+                size: f.size,
+                contentType: f.contentType,
+              });
+            },
+          }),
+        ),
+      },
+    ];
+  };
+
+  /**
+   * The `@` menu: the library's files, then the kernel's resource matches grouped by connector
+   * (only the files for `"files"`, only one connector's resources for a connector scope).
+   */
   const atContent = (scope: MenuState["scope"]): ComposerMenuGroup[] => {
+    const files = showFiles ? filesGroup() : [];
+    if (scope === "files") return files;
     const only = typeof scope === "object" ? scope.connectorId : undefined;
     const list = (resources?.resources ?? [])
       .filter((r) => only === undefined || r.connectorId === only)
       .slice(0, MAX_RESOURCE_ROWS);
     return [
+      ...files,
       ...byConnector(list).map((g) => ({
         id: `resources-${g.id}`,
         label: g.label,
@@ -1018,7 +1104,15 @@ export function ComposerBar({
               fileInput.current?.click();
             },
           },
-          // the file library row joins with the file library
+          {
+            id: "library",
+            label: t("composerMenu.library"),
+            icon: "file-text",
+            ...(drafts.limits.available
+              ? {}
+              : { disabled: true, description: t("filesUnavailable") }),
+            onSelect: () => openAt("files"),
+          },
           ...(project !== undefined
             ? [
                 {
@@ -1123,6 +1217,18 @@ export function ComposerBar({
   const guidance = skillsHref !== undefined ? t("noInvocable") : t("noInvocableReadOnly");
   const guidanceAction =
     skillsHref !== undefined ? { label: t("noInvocableAction"), href: skillsHref } : undefined;
+  // The `@` menu loads while a source it lists is on its way; it fails as a whole only when every
+  // source it lists failed (then the empty line is the reason).
+  const libraryFailed = showFiles && filesQ.isError;
+  const resourcesFailed = showResources && resourcesQ.isError;
+  const resting = searched !== atQuery;
+  const atLoading =
+    (showFiles && !filesQ.isError && (filesQ.isFetching || resting)) ||
+    (showResources && !resourcesQ.isError && (resourcesQ.isFetching || resting));
+  const everyFailed =
+    (libraryFailed || resourcesFailed) &&
+    (libraryFailed || !showFiles) &&
+    (resourcesFailed || !showResources);
   const menuProps: ComposerMenuProps | null =
     menu === null
       ? null
@@ -1133,18 +1239,32 @@ export function ComposerBar({
           query: menu.kind === "at" ? atQuery : query,
           // the `@` menu's rows are the kernel's matches already, unless they are an earlier query's
           filter: menu.kind !== "at" || staleResources,
-          loading:
-            menu.kind === "at" &&
-            (resourcesQ.isFetching || searched !== atQuery) &&
-            !resourcesQ.isError,
+          loading: menu.kind === "at" && atLoading,
           empty:
-            menu.kind === "at" && resourcesQ.isError
-              ? errorMessage(resourcesQ.error)
+            menu.kind === "at" && everyFailed
+              ? errorMessage(resourcesFailed ? resourcesQ.error : filesQ.error)
               : noInvocable && commandGroup === null
                 ? guidance
                 : menu.kind === "at"
-                  ? t("composerMenu.noResources")
+                  ? t(
+                      showFiles
+                        ? showResources
+                          ? "composerMenu.noFilesOrResources"
+                          : "composerMenu.noFiles"
+                        : "composerMenu.noResources",
+                    )
                   : t("composerMenu.noMatch"),
+          // one source failed and the other did not (both failing is the empty line above): the
+          // failure is said under the rows of the one that answered
+          ...(menu.kind === "at" && !everyFailed && (libraryFailed || resourcesFailed)
+            ? {
+                notice: {
+                  text: libraryFailed
+                    ? t("composerMenu.libraryFailed", { reason: errorMessage(filesQ.error) })
+                    : t("composerMenu.resourcesFailed", { reason: errorMessage(resourcesQ.error) }),
+                },
+              }
+            : {}),
           ...(noInvocable
             ? commandGroup !== null
               ? {
@@ -1173,11 +1293,12 @@ export function ComposerBar({
 
   const strip: AttachmentStripItem[] = [
     ...files.map((f): AttachmentStripItem => {
-      const type = f.file ? fileContentType(f.file) : "";
+      const type = f.file ? fileContentType(f.file) : (f.contentType ?? "");
       const src = previews.get(f.key);
       return {
         id: f.key,
-        kind: type.startsWith("image/") && f.status !== "error" ? "image" : "file",
+        // a library image has no local preview: it shows as a file with its type mark
+        kind: type.startsWith("image/") && f.status !== "error" && !f.library ? "image" : "file",
         name: f.name,
         contentType: type,
         size: f.size,
@@ -1329,6 +1450,7 @@ export function ComposerBar({
         onKeyDown: menuController.onKeyDown,
       }}
       pickers={pickers}
+      {...(place !== undefined ? { place } : {})}
       // one mode button before send holds the profile and the effort (from 640 up)
       {...(pickers.permission !== undefined
         ? {

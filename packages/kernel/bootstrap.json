@@ -3,15 +3,15 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "87ca221485218c947d592a6642e441620f1f27cc"
+    "commit": "5ace2e570721d3ab278f7fd2bffc3d40ec88503a"
   },
   "plugins": [
     {
       "name": "openai-compatible",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai-compatible",
-      "version": "0.1.0-rc.14",
-      "integrity": "sha512-BbB4lSBy4kEZA2kLOBDz00oOOjmQ4IaPPthmho00M15ZGcvDRMTuilw+244lbYPALZ3Kxzo1zNPWFI8STqUyDw==",
+      "version": "0.1.0-rc.15",
+      "integrity": "sha512-GwDNf+46SwFdDOodWGJokorOWQCvO+0QJx5NhsXChWCnpezmLFiXxgmIuG2V1KNQnRSCvH1SJBUE5EsOTFRvKA==",
       "required": false
     },
     {
@@ -26,40 +26,40 @@
       "name": "anthropic",
       "source": "npm",
       "npm": "@capybara-hq/plugin-anthropic",
-      "version": "0.1.0-rc.11",
-      "integrity": "sha512-du0wCj2z3asIZk1mpDOBAtlZSmqB1WQTr8doHb8uPSKGCqfkcCgSVrJWP8dbqW//BHO8un0uWLs74TBvk+f9ug==",
+      "version": "0.1.0-rc.12",
+      "integrity": "sha512-ABCkExMaGJUxcbDClv2mip931CmQGvbPcy9KV73vYEWUFGf/chU9I1irEKItIbx0I/yJRG1144GkpO3hfcmGrQ==",
       "required": false
     },
     {
       "name": "openai",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai",
-      "version": "0.1.0-rc.14",
-      "integrity": "sha512-Ybde3qfkz0PruixbxzgxrlVYTahz2eplRj4ioeTP20yFQcoPTLbm5hoBuj64nZTKlvTtmYQ+gvK6ofYUWY2NTw==",
+      "version": "0.1.0-rc.15",
+      "integrity": "sha512-D6iGu0lJMoXxHAPubBxPdF7NK8qxZhzF4DP27fI3p2oA3OvEaysQlU3EhMiGYgB31zjl9dqJMjIgVBaXHL711Q==",
       "required": false
     },
     {
       "name": "deepseek",
       "source": "npm",
       "npm": "@capybara-hq/plugin-deepseek",
-      "version": "0.1.0-rc.12",
-      "integrity": "sha512-bDl3SWO/SO23PaY7Jc9km79kctaGYKqjWOTaXcb+olJNHCNwP4lEXuAY7jylBMaDxL3WttWdHDS6c/QjHFbUeA==",
+      "version": "0.1.0-rc.13",
+      "integrity": "sha512-i6cPL8gTGCvPRdC5UzlKnJdYjrGfPUQHrpdJDp8q8cekMu6GReJQHBFb5dt3U+zlUfOX75IwoIlTPfeJwr/ACg==",
       "required": false
     },
     {
       "name": "bailian",
       "source": "npm",
       "npm": "@capybara-hq/plugin-bailian",
-      "version": "0.1.0-rc.13",
-      "integrity": "sha512-TglGdOPeJTUVSxm+KQOdWDrxRnjhFVEatvfQFVkSwOElxocNyEFBm7K3GSQmmuY2ISgxJQceA7Yvjlb0JNpKiA==",
+      "version": "0.1.0-rc.14",
+      "integrity": "sha512-m1e6FaD0ouHq/2vJkyQPyj3pz4PH7QpYNRlftOJYBaKve8EqKGz/uH44UGBtI+tROmDhdnZ5xn3FFlyyQIYCkA==",
       "required": false
     },
     {
       "name": "ark",
       "source": "npm",
       "npm": "@capybara-hq/plugin-ark",
-      "version": "0.1.0-rc.14",
-      "integrity": "sha512-sMyvv8eTeOHnR5WzxRxdYCXMnIn3uiS1kQokSFvojWy8Jk70t/kqMshUgisL+Tl8g3C0SFGwJYqvonWK+NI2jQ==",
+      "version": "0.1.0-rc.15",
+      "integrity": "sha512-IgsN+PARqkaO6wt5ndM+28UESleVEp0btmH/rUvNAsWp47IghYObGOikYkjHWVlWTApuFefKLkro+fKsS5HHPQ==",
       "required": false
     },
     {

@@ -512,22 +512,27 @@ span.cb-title-btn {
 .cb-composer > :not(.cb-composer-box, .cb-composer-bar) {
   grid-column: 1 / -1;
 }
+/* Rows: 1 the top strip, 2 and 3 the token warning and the attachments (placed in order), 4 the
+   text, 5 ＋ · the control row · send. Empty rows take no height (the frame has no row gap). */
+.cb-composer > .cb-composer-place {
+  grid-row: 1;
+}
 .cb-composer-box {
   display: contents;
 }
 .cb-composer-box > .cb-composer-input,
 .cb-composer-box > .cb-composer-line {
-  grid-row: 3;
+  grid-row: 4;
   grid-column: 1 / -1;
 }
 /* ＋, the control row and send: one line under the text, ＋ a space.2 into the frame's padding */
 .cb-composer-box > .cb-composer-attach {
-  grid-row: 4;
+  grid-row: 5;
   grid-column: 1;
   margin-left: calc(-1 * var(--cb-space-2));
 }
 .cb-composer-bar {
-  grid-row: 4;
+  grid-row: 5;
   grid-column: 2;
   display: flex;
   align-items: center;
@@ -536,7 +541,7 @@ span.cb-title-btn {
 }
 .cb-composer-box > .cb-send,
 .cb-composer-box > .cb-stop {
-  grid-row: 4;
+  grid-row: 5;
   grid-column: 3;
 }
 .cb-composer-bar > .cb-grow {
@@ -707,6 +712,87 @@ span.cb-title-btn {
 }
 .cb-mode-button.cb-btn .cb-icon {
   flex: none;
+}
+/* The top strip (§6.16.2 "Top strip"): device / project, pulled left by space.2 like the control
+ * row so the device's label lines up with the text. The project gives way first. */
+.cb-composer-place {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0 0 var(--cb-space-1) calc(-1 * var(--cb-space-2));
+}
+.cb-composer-place-full {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.cb-composer-place-full > .cb-picker {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.cb-composer-place-full > .cb-picker[data-locked="true"] {
+  overflow: hidden;
+}
+.cb-composer-place-sep ~ .cb-picker {
+  flex-shrink: 100;
+}
+.cb-composer-place-sep {
+  flex: none;
+  padding: 0 var(--cb-space-1);
+  color: var(--cb-muted);
+}
+/* The compact chip and its parts (shown below 600, in the touch block below). */
+.cb-composer-place-chip {
+  display: none;
+}
+.cb-composer-place-chip.cb-btn .cb-btn-body {
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-place-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The device keeps its name up to 8em; the project gives way first. */
+.cb-place-value[data-part="place-device"] {
+  flex: none;
+  max-width: 8em;
+}
+.cb-place-value[data-part="place-project"] {
+  flex: 0 1 auto;
+}
+.cb-place-sep {
+  flex: none;
+  color: var(--cb-faint);
+}
+.cb-composer-place-chip .cb-icon {
+  flex: none;
+}
+/* The place sheet's groups (§6.59): touch.sheet-inset apart, a heading over each. */
+.cb-place-group + .cb-place-group {
+  margin-top: var(--cb-touch-sheet-inset);
+}
+/* With the top strip the mode and the settings chip share one wrapper: in the row from 600 with a
+ * fine pointer (the chip hidden), the row above the pill in the touch form. */
+.cb-composer-settings {
+  display: contents;
+}
+.cb-composer-settings > .cb-composer-options.cb-btn {
+  display: none;
+  min-width: 0;
+  padding: 0 var(--cb-space-2);
+  color: var(--cb-muted);
+}
+/* Medium (600 to 840): the mode shows its icon and chevron only; its tooltip names it. */
+@media (min-width: 600px) and (max-width: 840px) {
+  .cb-composer[data-place="true"] .cb-composer-mode .cb-picker-value {
+    display: none;
+  }
+}
+.cb-composer[data-form="medium"] .cb-composer-mode .cb-picker-value {
+  display: none;
 }
 @media not all and (min-width: 600px) {
   .cb-composer-pickers,
@@ -969,6 +1055,10 @@ span.cb-title-btn {
   color: var(--cb-ink);
   cursor: pointer;
 }
+.cb-sheet-option[data-disabled="true"] {
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
 .cb-sheet-option[data-checked="true"] {
   background: var(--cb-selected);
 }
@@ -1162,7 +1252,7 @@ span.cb-title-btn {
 .cb-send.cb-btn:disabled {
   border-color: transparent;
   background: var(--cb-selected);
-  color: var(--cb-disabled);
+  color: var(--cb-faint);
 }
 .cb-stop.cb-btn,
 .cb-stop.cb-btn:hover:not(:disabled) {
@@ -2307,7 +2397,7 @@ button.cb-property-row {
   }
   .cb-composer-box > .cb-send.cb-btn:disabled {
     background: var(--cb-selected);
-    color: var(--cb-disabled);
+    color: var(--cb-faint);
   }
   /* the pickers fold into the chip and its sheet at every width; the suggestion button stays out */
   .cb-composer-pickers,
@@ -2349,6 +2439,49 @@ button.cb-property-row {
   }
   .cb-composer-bar > .cb-grow {
     display: none;
+  }
+  /* The top strip (§6.16.2 compact): row 3 above the pill, the strip (or its chip) at the start,
+     the mode and the settings chip at the end; the suggestion's button goes to row 5's end. */
+  .cb-composer[data-place="true"] > .cb-composer-place {
+    grid-row: 3;
+    grid-column: 1 / 3;
+    justify-self: start;
+    max-width: 100%;
+    margin: 0 0 var(--cb-space-2);
+  }
+  .cb-composer[data-place="true"] .cb-composer-settings {
+    display: flex;
+    grid-row: 3;
+    grid-column: 3;
+    align-items: center;
+    gap: var(--cb-space-1);
+    min-width: 0;
+    margin-bottom: var(--cb-space-2);
+  }
+  .cb-composer[data-place="true"] .cb-composer-mode {
+    display: contents;
+  }
+  /* capped at 11em, the model's name then cut with an ellipsis (the reference's chip, equal) */
+  .cb-composer-settings > .cb-composer-options.cb-btn {
+    display: inline-flex;
+    max-width: 11em;
+    min-height: var(--cb-touch-hit);
+    padding: 0 var(--cb-space-3);
+    border: 1px solid var(--cb-float-line);
+    border-radius: var(--cb-radius-pill);
+    background: var(--cb-float-ground);
+  }
+  /* the agent picker (no page passes it) gets its own row under the pill: row 3 is the strip's */
+  .cb-composer[data-place="true"] .cb-composer-bar > .cb-picker.cb-btn {
+    grid-row: 7;
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin: var(--cb-space-2) 0 0;
+  }
+  .cb-composer[data-place="true"] .cb-composer-bar > .cb-composer-suggestion-use.cb-btn {
+    grid-row: 5;
+    grid-column: 3;
+    margin-top: var(--cb-space-2);
   }
 
   /* The composer floats over the thread's bottom; the thread's padding clears it. The page lifts
@@ -2421,5 +2554,42 @@ button.cb-property-row {
   }
   .cb-tool-group > .cb-tool-line > .cb-tool-label {
     flex: 1 1 auto;
+  }
+}
+
+/* The top strip below 600 (§6.16.2 compact): one chip 「<device> / <project>」 styled as the
+ * settings chip, opening the place sheet; the mode is a touch.hit icon button (no label, no
+ * chevron). */
+@media not all and (min-width: 600px) {
+  .cb-composer-place-full {
+    display: none;
+  }
+  .cb-composer-place-chip,
+  .cb-composer-place-chip.cb-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cb-space-1);
+    min-width: 0;
+    max-width: 100%;
+    min-height: var(--cb-touch-hit);
+    padding: 0 var(--cb-space-3);
+    border: 1px solid var(--cb-float-line);
+    border-radius: var(--cb-radius-pill);
+    background: var(--cb-float-ground);
+    color: var(--cb-muted);
+    white-space: nowrap;
+  }
+  .cb-composer-place-chip.cb-btn[aria-expanded="true"] {
+    color: var(--cb-ink);
+  }
+  .cb-composer[data-place="true"] .cb-mode-button.cb-btn {
+    justify-content: center;
+    width: var(--cb-touch-hit);
+    min-width: var(--cb-touch-hit);
+    padding: 0;
+  }
+  .cb-composer[data-place="true"] .cb-mode-button .cb-picker-value,
+  .cb-composer[data-place="true"] .cb-mode-button .cb-btn-body > .cb-icon:last-child {
+    display: none;
   }
 }

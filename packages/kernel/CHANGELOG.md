@@ -1,5 +1,63 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.108
+
+### Patch Changes
+
+- 73516ef: Pin the model provider plugins that declare prompt cache support (anthropic, ark, bailian,
+  deepseek, openai, openai-compatible) and the plugins marketplace commit they were released from.
+
+## 0.1.0-rc.107
+
+### Patch Changes
+
+- d3e9ad6: The start loads the extensions the second bootstrap pass installed on its own replica before it
+  plans template connectors and serves, instead of waiting for the `kernel.plugins.changed` message.
+- 5aaf693: Media refs name a file id: `MediaSource`'s `ref` variant is `{ kind: "ref"; fileId }` (was
+  `attachmentId`), checked by `validateMediaBlock` and the new `isFileId`.
+  `FilePreviewConversationArgs.conversationId` is optional: it is absent for a library file previewed
+  outside a conversation. The kernel logs new refs as `fileId` and reads a ref logged before the
+  rename (`attachmentId`, the same id) as an alias, so old logs rebuild unchanged.
+- efaf3e7: Compaction summaries reuse the prompt cache: every compaction first summarizes from the
+  conversation's last request (its cached prefix) plus a summary instruction, for models that pass
+  the in-context quality gate, and otherwise summarizes the transcript as before;
+  `compaction_summary.method` records which path ran.
+- ca30a43: Component queries for plugin pages: `POST /api/v1/orgs/:orgId/ui/query/:plugin/:id` runs a
+  component's `ctx.ui.query` handler (params ≤ 16 KB, result ≤ 1 MB, 10 s timeout); component
+  actions take payloads up to 64 KB and may name queries to refetch; `ctx.ui.invalidate` carries
+  `queries: true`. The `fake-client-page` test fixture; `perm-ui` checks `ctx.ui.query` ids.
+  
+  Plugin pages in the primary navigation: the org setting `navigation.pluginPages` (per contribution
+  key the section `primary` or `more`; at most 3 primary, else 400 `org_settings.nav_primary_limit`)
+  through `PATCH /orgs/:orgId/settings` and the Platform operation `org-settings.update`; the
+  contributions list names an `org.page` component's `nav` suggestion.
+- 6332845: Full plugin pages contract: `ctx.ui.query`, the `usePluginQuery`, `usePageParams` and
+  `useNavigate` hooks, `frame` / `nav` on `org.page` components, the `params` prop of `org.page`,
+  new `UI_LIMITS` for queries and page params, and fake-host support in `/testing`.
+  
+  `@capybara-hq/plugin-client` forwards the page templates (`ListPage`, `DetailPage`, `FormPage`,
+  `FormSection`, `SettingsPage`, `ActionRow`), data components (`DataTable`, `CellTitle`, `ItemList`,
+  `ItemListItem`, `Markdown`, `EmptyState`, `Avatar`, `PersonName`, `FilterChip`), inputs (`Input`,
+  `Textarea`, `Field`, `Tabs`, `Segmented`, `PrincipalPicker`), overlays (`Dialog`, `DangerConfirm`,
+  `Sheet`, `Menu`, `Popover`) and `Board`, with behaving stand-ins in `/testing`; the web host
+  prepends its scope crumbs to a forwarded template's `header.path`. The density of `Select`,
+  `Input`, `Segmented` and `FilterChip` is typed as the design's own steps.
+  
+  The web renders full plugin pages: an `org.page` component with `frame: "page"` draws its page on
+  `/p/<plugin>/<id>` without the host's DetailPage and must render exactly one forwarded template
+  (dev and tests throw, production logs once); its params come from the query string (2 048 bytes),
+  `useNavigate` changes them or opens another page of the plugin or a conversation, and
+  `usePluginQuery` reads through the query cache, refetched on `ctx.ui.invalidate` and an action's
+  `invalidate`. The host drops links in forwarded components other than same-origin paths and
+  http(s) URLs. The contributions list names a component page's `frame`. The `/testing` DataTable
+  stand-in draws `empty` / `noResults` and its `state`.
+- 48e8860: Add the `promptCache.longTtl` setting to the platform and org settings.
+- a5b4a02: Ask for the long prompt cache tier per request when `promptCache.longTtl` is on, record it in the
+  model call and replay it with zero drift.
+- Updated dependencies [5aaf693]
+- Updated dependencies [6332845]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.86
+
 ## 0.1.0-rc.106
 
 ### Patch Changes

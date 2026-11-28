@@ -108,7 +108,15 @@ export function modeMenuEntries(p: ModeMenuProps): ConvMenuEntry[] {
  * icon and label and a `chevron-down`, opening above the composer. Arrow keys move through the
  * modes and the effort segments, Enter or Space picks, Escape closes; focus returns to the button.
  */
-export function ModeMenu(p: ModeMenuProps): JSX.Element {
+export function ModeMenu(
+  p: ModeMenuProps & {
+    /**
+     * The tooltip names the mode before its sentence (the composer's top strip layout, where the
+     * button shows its icon alone on medium and compact, §6.16.2).
+     */
+    named?: boolean;
+  },
+): JSX.Element {
   const [open, setOpen] = useState(false);
   const current = p.modes.find((m) => m.checked) ?? p.modes[0];
   const effort = p.effort?.items.find((i) => i.checked);
@@ -132,7 +140,11 @@ export function ModeMenu(p: ModeMenuProps): JSX.Element {
           part="mode-button"
           aria-label={name}
           // locked: the reason on hover, as a locked picker's
-          title={p.locked ?? current?.description}
+          title={
+            p.named && current
+              ? `${current.label}: ${p.locked ?? current.description}`
+              : (p.locked ?? current?.description)
+          }
           data-locked={p.locked !== undefined ? "true" : undefined}
           disabled={p.disabled}
         >

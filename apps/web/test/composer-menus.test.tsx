@@ -39,6 +39,7 @@ const ORG = "/api/v1/orgs/o1";
 const BASE = `${ORG}/conversations/c1`;
 const INVOCABLE = `${ORG}/agents/ag1/invocable-skills`;
 const RESOURCES = `${ORG}/connectors/resources`;
+const LIBRARY = `${ORG}/files`;
 
 const SKILLS = {
   skills: [
@@ -105,6 +106,39 @@ const ALL_RESOURCES = [
   resource("k2", "CRM", "Accounts"),
 ];
 
+const libraryFile = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+  id,
+  name,
+  contentType: "application/pdf",
+  size: 1024,
+  origin: "upload",
+  agentId: null,
+  sourceConversation: null,
+  versions: 1,
+  createdAt: "2026-11-24T08:00:00Z",
+  previewable: null,
+  ...over,
+});
+const LIBRARY_FILES = [
+  libraryFile("lf1", "report.pdf"),
+  libraryFile("lf2", "notes.md", {
+    contentType: "text/markdown",
+    origin: "generated",
+    agentId: "ag1",
+    agentName: "Researcher",
+    createdAt: "2026-11-20T08:00:00Z",
+  }),
+  libraryFile("lf3", "budget.xlsx"),
+];
+/** The library search route: the files whose name contains `q`. */
+const librarySearch = (files: ReturnType<typeof libraryFile>[]) => (c: Call) => {
+  const q = new URL(c.url, "http://x").searchParams.get("q") ?? "";
+  return json(200, {
+    files: files.filter((f) => f.name.toLowerCase().includes(q.toLowerCase())),
+    next: null,
+  });
+};
+
 function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = {}) {
   return stubApi({
     [`GET ${BASE}`]: () => json(200, CONV()),
@@ -117,6 +151,8 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
     [`GET ${INVOCABLE}`]: () => json(200, SKILLS),
     [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
     [`GET ${ORG}/connectors`]: () => json(200, CONNECTORS),
+    // no library files unless a test lists some (the `@` menu then shows resources alone)
+    [`GET ${LIBRARY}`]: () => json(200, { files: [], next: null }),
     [`GET ${RESOURCES}`]: (c) => {
       const q = new URL(c.url, "http://x").searchParams.get("query") ?? "";
       return json(200, {
@@ -154,6 +190,8 @@ const typeAtEnd = (...chars: string[]) => {
 };
 const resourceReads = (calls: Call[]) =>
   calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === RESOURCES).map((c) => c.url);
+const libraryReads = (calls: Call[]) =>
+  calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === LIBRARY).map((c) => c.url);
 
 beforeEach(() => {
   params.conversationId = "c1";
@@ -182,9 +220,10 @@ describe("the + menu", () => {
     await within(el).findByText("Docs");
     const m = zh.chat.composerMenu;
     expect(headingsOf(el)).toEqual([m.add, m.abilities, m.connectors]);
-    // the file library and project files join with their own lines; a disabled connector is absent
-    expect(labelsOf(el)).toEqual([m.upload, m.resources, m.skills, "Docs", "CRM"]);
+    // project files join with a device project; a disabled connector is absent
+    expect(labelsOf(el)).toEqual([m.upload, m.library, m.resources, m.skills, "Docs", "CRM"]);
     expect(iconOf(within(el).getByRole("option", { name: m.upload }))).toBe("upload");
+    expect(iconOf(within(el).getByRole("option", { name: m.library }))).toBe("file-text");
     expect(iconOf(within(el).getByRole("option", { name: m.skills }))).toBe("skills");
     // a connector row carries its plugin's icon and its description
     const docs = within(el).getByRole("option", { name: "Docs" });
@@ -523,6 +562,278 @@ describe("the @ menu", () => {
     fireEvent.pointerDown(screen.getByText("hi"));
     noMenu();
     expect(input().value).toBe("see @");
+  });
+});
+
+describe("the @ menu's library files", () => {
+  const send = () => json(202, { event: userMsg(9, "x") });
+  const posts = (calls: Call[]) =>
+    calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
+  const uploadsOrDiscards = (calls: Call[]) =>
+    calls.filter(
+      (c) =>
+        (c.method === "POST" && c.url.split("?")[0] === LIBRARY) ||
+        (c.method === "DELETE" && c.url.startsWith(`${LIBRARY}/`)),
+    );
+
+  it("lists 最近文件 first for the empty query, each with its type mark and when it came", async () => {
+    api({ [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES) });
+    await renderChatRoute({ locale: "zh" });
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(zh), "@");
+    const el = await menu();
+    await within(el).findByText("report.pdf");
+    await within(el).findByText("Accounts");
+    expect(headingsOf(el)).toEqual([zh.chat.composerMenu.recentFiles, "Docs", "CRM"]);
+    const report = within(el).getByRole("option", { name: /report\.pdf/ });
+    expect(report.querySelector('[data-part="composer-menu-lead"]')?.textContent).toBe("PDF");
+    expect(report.textContent).toContain("2026-11-24 上传");
+    const notes = within(el).getByRole("option", { name: /notes\.md/ });
+    expect(notes.textContent).toContain("Researcher 2026-11-20 生成");
+  });
+
+  it("searches the library with q (debounced) under Matching files; a pick is sent by id, never uploaded", async () => {
+    const calls = api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`POST ${BASE}/messages`]: send,
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "see @");
+    await within(await menu()).findByText("report.pdf");
+    typeAtEnd("r", "e", "p");
+    await vi.waitFor(() => expect(libraryReads(calls)).toContain(`${LIBRARY}?q=rep&limit=8`));
+    expect(libraryReads(calls)).toEqual([`${LIBRARY}?limit=8`, `${LIBRARY}?q=rep&limit=8`]);
+    let el = await menu();
+    await vi.waitFor(() => expect(labelsOf(el)).toEqual(["report.pdf", "Report"]));
+    el = await menu();
+    expect(headingsOf(el)).toEqual([en.chat.composerMenu.matchingFiles, "Docs"]);
+    await user.click(within(el).getByRole("option", { name: /report\.pdf/ }));
+    expect(input().value).toBe("see ");
+    const group = screen.getByRole("group", { name: en.chat.files });
+    expect(within(group).getByText("report.pdf")).toBeTruthy();
+    await user.type(input(), "{Enter}");
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+    expect(bodyOf(posts(calls)[0])).toMatchObject({ text: "see", files: ["lf1"] });
+    expect(uploadsOrDiscards(calls)).toEqual([]);
+  });
+
+  it("the heading stays Recent files while @rep waits for its answer, then Matching files", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls = api({
+      [`GET ${LIBRARY}`]: async (c) => {
+        if (new URL(c.url, "http://x").searchParams.get("q") === "rep") await held;
+        return librarySearch(LIBRARY_FILES)(c);
+      },
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    await within(await menu()).findByText("report.pdf");
+    expect(headingsOf(await menu())[0]).toBe(en.chat.composerMenu.recentFiles);
+    typeAtEnd("r", "e", "p");
+    await vi.waitFor(() => expect(libraryReads(calls)).toContain(`${LIBRARY}?q=rep&limit=8`));
+    // the rows are still the empty query's: so is the heading
+    expect(headingsOf(await menu())[0]).toBe(en.chat.composerMenu.recentFiles);
+    release();
+    await vi.waitFor(async () =>
+      expect(headingsOf(await menu())[0]).toBe(en.chat.composerMenu.matchingFiles),
+    );
+    expect(labelsOf(await menu())[0]).toBe("report.pdf");
+  });
+
+  it("a file already in the draft is not added twice; removing one discards nothing", async () => {
+    const calls = api({ [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES) });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    for (let i = 0; i < 2; i++) {
+      await user.type(input(), "@");
+      await user.click(await screen.findByRole("option", { name: /report\.pdf/ }));
+    }
+    const group = screen.getByRole("group", { name: en.chat.files });
+    expect(within(group).getAllByText("report.pdf")).toHaveLength(1);
+    await user.click(within(group).getByRole("button", { name: /report\.pdf/ }));
+    expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull();
+    expect(uploadsOrDiscards(calls)).toEqual([]);
+  });
+
+  it("the per-message file count applies to library files", async () => {
+    api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`GET ${LIBRARY}/limits`]: () =>
+        json(200, {
+          types: ["application/pdf"],
+          maxBytes: 1_000_000,
+          imageMaxBytes: 1_000_000,
+          extensions: [],
+          maxPerMessage: 2,
+          requestMediaBytes: 10_000_000,
+          available: true,
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    for (const name of [/report\.pdf/, /notes\.md/, /budget\.xlsx/]) {
+      await user.type(input(), "@");
+      await user.click(await screen.findByRole("option", { name }));
+    }
+    expect(await screen.findByText(en.chat.filesLimit.replace("{max}", "2"))).toBeTruthy();
+    const group = screen.getByRole("group", { name: en.chat.files });
+    expect(within(group).queryByText("budget.xlsx")).toBeNull();
+    expect(within(group).getByText("notes.md")).toBeTruthy();
+  });
+
+  it("+ → File library opens @ with the files alone", async () => {
+    const calls = api({ [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES) });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Attach files" }));
+    await user.click(await screen.findByRole("option", { name: en.chat.composerMenu.library }));
+    expect(input().value).toBe("@");
+    const el = await menu();
+    expect(el.getAttribute("data-kind")).toBe("at");
+    await within(el).findByText("report.pdf");
+    expect(headingsOf(el)).toEqual([en.chat.composerMenu.recentFiles]);
+    expect(within(el).queryByText("Handbook")).toBeNull();
+    expect(resourceReads(calls)).toEqual([]);
+  });
+
+  it("+ → Connector resources lists no files", async () => {
+    const calls = api({ [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES) });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Attach files" }));
+    await user.click(await screen.findByRole("option", { name: en.chat.composerMenu.resources }));
+    const el = await menu();
+    await within(el).findByText("Handbook");
+    expect(within(el).queryByText("report.pdf")).toBeNull();
+    expect(libraryReads(calls)).toEqual([]);
+  });
+
+  it("a library file sent is read again: the next @ shows the library afresh", async () => {
+    const calls = api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`POST ${BASE}/messages`]: send,
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "see @");
+    await user.click(await screen.findByRole("option", { name: /report\.pdf/ }));
+    await user.type(input(), "{Enter}");
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+    expect(libraryReads(calls)).toEqual([`${LIBRARY}?limit=8`]);
+    await user.type(input(), "@");
+    await within(await menu()).findByText("report.pdf");
+    await vi.waitFor(() =>
+      expect(libraryReads(calls)).toEqual([`${LIBRARY}?limit=8`, `${LIBRARY}?limit=8`]),
+    );
+  });
+
+  it("a failed send gives a library file back; neither its failure, removal nor unmount discards it", async () => {
+    const calls = api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`POST ${BASE}/messages`]: () =>
+        json(404, {
+          error: {
+            code: "file.not_found",
+            message: "gone",
+            details: [{ path: "files", message: "gone", fileId: "lf1" }],
+          },
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    for (const name of [/report\.pdf/, /notes\.md/]) {
+      await user.type(input(), "@");
+      await user.click(await screen.findByRole("option", { name }));
+    }
+    await user.type(input(), "see{Enter}");
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+    // given back with the failure marked on the file the kernel named
+    const back = await screen.findByRole("group", { name: en.chat.files });
+    expect((await within(back).findByRole("alert")).textContent).toBe(en.errors.file.not_found);
+    expect(within(back).getByText("notes.md")).toBeTruthy();
+    await user.click(within(back).getByRole("button", { name: /report\.pdf/ }));
+    expect(within(back).queryByText("report.pdf")).toBeNull();
+    cleanup();
+    expect(uploadsOrDiscards(calls)).toEqual([]);
+  });
+
+  it("without storage the files are listed disabled, saying why", async () => {
+    api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`GET ${LIBRARY}/limits`]: () =>
+        json(200, {
+          types: ["application/pdf"],
+          maxBytes: 1_000_000,
+          imageMaxBytes: 1_000_000,
+          extensions: [],
+          maxPerMessage: 10,
+          requestMediaBytes: 10_000_000,
+          available: false,
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    const el = await menu();
+    await within(el).findByText("report.pdf");
+    await vi.waitFor(() => {
+      const row = within(el).getByRole("option", { name: /report\.pdf/ });
+      expect(row.getAttribute("aria-disabled")).toBe("true");
+      expect(row.textContent).toContain(en.chat.filesUnavailable);
+    });
+    await user.click(within(el).getByRole("option", { name: /report\.pdf/ }));
+    expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull();
+  });
+
+  it("failed resources keep the files and say so under them", async () => {
+    api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`GET ${RESOURCES}`]: () =>
+        json(500, { error: { code: "internal", message: "boom", requestId: "r1" } }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    const el = await menu();
+    await within(el).findByText("report.pdf");
+    expect(headingsOf(el)).toEqual([en.chat.composerMenu.recentFiles]);
+    await vi.waitFor(() =>
+      expect(el.textContent).toContain(en.chat.composerMenu.resourcesFailed.split("{reason}")[0]),
+    );
+    expect(el.textContent).not.toContain(en.chat.composerMenu.libraryFailed.split("{reason}")[0]);
+  });
+
+  it("a failed library read keeps the resources and says so under them", async () => {
+    api({
+      [`GET ${LIBRARY}`]: () =>
+        json(500, { error: { code: "internal", message: "boom", requestId: "r1" } }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    const el = await menu();
+    await within(el).findByText("Accounts");
+    expect(headingsOf(el)).toEqual(["Docs", "CRM"]);
+    await vi.waitFor(() =>
+      expect(el.textContent).toContain(en.chat.composerMenu.libraryFailed.split("{reason}")[0]),
+    );
   });
 });
 

@@ -53,6 +53,11 @@ export type ComposerOptionsProps = {
   permission?: PickerProps;
   model: PickerProps;
   effort?: PickerProps;
+  /**
+   * The button reads the model's name alone (the composer's top strip, §6.16.2 compact): the
+   * effort is chosen in the sheet only.
+   */
+  nameOnly?: boolean;
 };
 
 /**
@@ -71,6 +76,7 @@ export function ComposerOptions({
   permission,
   model,
   effort,
+  nameOnly,
 }: ComposerOptionsProps): JSX.Element {
   const t = useDesignT();
   const [open, setOpenState] = useState(false);
@@ -189,7 +195,7 @@ export function ComposerOptions({
           <span className="cb-options-value" data-part="options-model">
             {shortModelLabel(model.value)}
           </span>
-          {effort ? (
+          {effort && !nameOnly ? (
             <>
               <span className="cb-options-sep" aria-hidden="true">
                 ·

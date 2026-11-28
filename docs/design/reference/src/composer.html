@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Composer</h1>
-<p>Raised, 1px line, radius md, float shadow. Bottom row: attach, agent (locked after the first message), model, effort (hidden when the model declares none), the context meter (a muted ring, control.dense, right before send; fail past the compaction threshold) when usage is known, send / stop. Running: the hint names ↵ and ⌘↵. Skill (phase D): the picked skill's chip before the text, its argument hint as the placeholder. Device: the device picker between the agent and the model, locked after the first message. Suggestion: the prompt suggestion as the placeholder, Tab fills it; the touch button 使用建议 before send (drawn here; a touch device only).</p>
+<p>Raised, 1px line, radius md, float shadow. Bottom row: attach, agent (locked after the first message), model, effort (hidden when the model declares none), the context meter (a muted ring, control.dense, right before send; fail past the compaction threshold) when usage is known, send / stop. Running: the hint names ↵ and ⌘↵. Skill (phase D): the picked skill's chip before the text, its argument hint as the placeholder. Device: the device picker between the agent and the model, locked after the first message. Suggestion: the prompt suggestion as the placeholder, Tab fills it; the touch button 使用建议 before send (drawn here; a touch device only). Place: the top strip, device / project above the text (a muted /), the control row ＋ · mode on the left, model · effort and send on the right; locked on a conversation (static text). Place medium (600 to 840): the mode as its icon and chevron, the project giving way first. Compact place: the touch form, the place chip 「device / project」, the mode icon button and the settings chip (the model's name) on the row above the pill. Compact place sheet: the chip's bottom sheet, the device group then that device's projects.</p>
 <div class="r-blocks">
 <section data-ref-block="composer-idle" style="width:752px" data-pad>
   <template data-fixture="composer" data-opts='{"state": "idle"}'></template>
@@ -47,6 +47,21 @@
 </section>
 <section data-ref-block="composer-suggestion" style="width:752px" data-pad>
   <template data-fixture="composer" data-opts='{"state": "suggestion"}'></template>
+</section>
+<section data-ref-block="composer-place" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"place": "open"}'></template>
+</section>
+<section data-ref-block="composer-place-locked" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"place": "locked"}'></template>
+</section>
+<section data-ref-block="composer-place-medium" style="width:600px" data-pad>
+  <template data-fixture="composer" data-opts='{"place": "open", "form": "medium"}'></template>
+</section>
+<section data-ref-block="composer-compact-place" style="width:390px" data-pad data-mobile-sizes>
+  <template data-fixture="composer" data-opts='{"place": "open", "form": "compact"}'></template>
+</section>
+<section data-ref-block="composer-compact-place-sheet" style="width:390px;height:844px" data-mobile-sizes>
+  <template data-fixture="composer" data-opts='{"sheet": true}'></template>
 </section>
 </div>
 </main>

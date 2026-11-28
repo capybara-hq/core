@@ -221,15 +221,17 @@ describe("outside touch the composer and thread keep their base rules", () => {
           r.decls["grid-row"],
       )
       .map((r) => [r.selector, r.decls["grid-row"], r.decls["grid-column"]]);
+    // row 1 the top strip, 2 and 3 the token warning and the attachments, 4 the text
     expect(rows).toEqual([
+      [".cb-composer > .cb-composer-place", "1", undefined],
       [
         ".cb-composer-box > .cb-composer-input, .cb-composer-box > .cb-composer-line",
-        "3",
+        "4",
         "1 / -1",
       ],
-      [".cb-composer-box > .cb-composer-attach", "4", "1"],
-      [".cb-composer-bar", "4", "2"],
-      [".cb-composer-box > .cb-send, .cb-composer-box > .cb-stop", "4", "3"],
+      [".cb-composer-box > .cb-composer-attach", "5", "1"],
+      [".cb-composer-bar", "5", "2"],
+      [".cb-composer-box > .cb-send, .cb-composer-box > .cb-stop", "5", "3"],
     ]);
   });
   it("the DOM order is the text, ＋, send, then the control row (one order for both forms)", () => {
