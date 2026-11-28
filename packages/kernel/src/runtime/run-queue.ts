@@ -267,7 +267,7 @@ export class RunQueue {
   async startIdleCompaction(
     conversationId: string,
     armedSeq: number,
-    mode: IdleMode = "cache",
+    mode: IdleMode,
   ): Promise<string | null> {
     try {
       return await this.startIdleCompactionIn(conversationId, armedSeq, mode);

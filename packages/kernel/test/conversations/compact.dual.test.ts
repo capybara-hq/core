@@ -322,10 +322,10 @@ describe("idle compaction on two replicas", () => {
     let arrived = 0;
     for (const q of queues) {
       const original = q.startIdleCompaction.bind(q);
-      q.startIdleCompaction = async (conversationId, armedSeq) => {
+      q.startIdleCompaction = async (conversationId, armedSeq, mode) => {
         if (++arrived === 2) both.open();
         await both.promise;
-        return original(conversationId, armedSeq);
+        return original(conversationId, armedSeq, mode);
       };
     }
     let outcomes: Awaited<ReturnType<typeof fireOn>>[];

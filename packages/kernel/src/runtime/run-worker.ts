@@ -1176,8 +1176,7 @@ export class RunWorker {
         },
         // R13: an idle run never sets `manual`; it runs in the mode it was armed in (a row from
         // before 0199 has none: cache, the in-context summary or nothing)
-        origin,
-        run.idle_mode ?? "cache",
+        origin === "idle" ? { origin, idleMode: run.idle_mode ?? "cache" } : { origin },
       );
     } catch (err) {
       if (state.abandoned) return "abandoned";

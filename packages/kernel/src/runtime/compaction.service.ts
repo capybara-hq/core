@@ -45,6 +45,13 @@ export interface ForceCompactionInput {
  */
 export type CompactOrigin = "manual" | "idle";
 
+/**
+ * How {@link CompactionService.force} compacts: a person's compact run, or the idle job's in the
+ * mode it was armed in (compaction model spec §6.3). The mode is part of the idle origin, so an
+ * idle run cannot be started without one (a run never switches modes between arm, fire and run).
+ */
+export type CompactRunKind = { origin: "manual" } | { origin: "idle"; idleMode: IdleMode };
+
 /** What {@link CompactionService.probeIdle} reads from the conversation. */
 export type IdleProbeInput = Omit<ForceCompactionInput, "runId" | "signal" | "accountId">;
 
@@ -98,14 +105,12 @@ export class CompactionService {
     @Inject(CompactionSettingsService) private readonly settings: CompactionSettingsService,
   ) {}
 
-  async force(
-    input: ForceCompactionInput,
-    origin: CompactOrigin = "manual",
-    idleMode: IdleMode = "cache",
-  ): Promise<ForcedCompaction> {
+  async force(input: ForceCompactionInput, kind: CompactRunKind): Promise<ForcedCompaction> {
     const env = await this.environment(input);
     const opts: CompactOptions =
-      origin === "manual" ? { force: true, manual: true } : { force: true, idle: idleMode };
+      kind.origin === "manual"
+        ? { force: true, manual: true }
+        : { force: true, idle: kind.idleMode };
     const out = await runCompaction(
       this.steps.deps,
       env.stepInput,

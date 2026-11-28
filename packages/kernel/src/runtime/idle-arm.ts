@@ -18,6 +18,7 @@ import {
   type IdleArmFacts,
   type IdleArmSkip,
   idleArmDecision,
+  idleMinTokens,
   type RunStartedTrigger,
 } from "./context/idle-compaction-rules.js";
 import { inContextSummaryAllowed, unansweredAfterReply } from "./context/in-context-compaction.js";
@@ -229,6 +230,14 @@ export class IdleArm {
     const lastModel =
       last && resolved.get(modelKey(last.call.payload.provider, last.call.payload.model));
     const lastInfo = lastModel?.info;
+
+    // a context under the size floor arms in neither mode: skip before the purpose read (and the
+    // summarizer choice's fallback warnings) a small finish would otherwise pay every time
+    if (last !== undefined && lastInfo !== undefined) {
+      const u = last.usage.payload;
+      const total = u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens + u.outputTokens;
+      if (total < idleMinTokens(lastInfo.contextWindow, settings)) return skip("small");
+    }
 
     // compaction model spec §6.1, C2: the mode is the summarizer a compaction would choose now,
     // V = the last step call's model under the effective settings; a failed purpose read throws

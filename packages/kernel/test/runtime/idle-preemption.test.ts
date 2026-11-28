@@ -160,7 +160,7 @@ async function armedSeqOf(conv: string): Promise<number> {
 async function startIdle(conv: string): Promise<string> {
   const armedSeq = await armedSeqOf(conv);
   const id = await withOrgScope(orgId, () =>
-    k.app.get(RunQueue).startIdleCompaction(conv, armedSeq),
+    k.app.get(RunQueue).startIdleCompaction(conv, armedSeq, "cache"),
   );
   expect(id).not.toBeNull();
   return id as string;

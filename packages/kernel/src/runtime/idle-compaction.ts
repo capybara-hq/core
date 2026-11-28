@@ -8,16 +8,23 @@ import { COMPACTION_SETTINGS } from "../identity/settings.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { ModelPurposesService } from "../models/purposes.js";
 import { CompactionService } from "./compaction.service.js";
+import {
+  type CompactionModelPort,
+  chooseSummarizer,
+  compactionModelPort,
+} from "./compaction-model.js";
 import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { CACHE_EXPIRY_MARGIN_MS, CACHE_FIRE_RATIO } from "./context/cache-expiry.js";
 import {
   type IdleFireFacts,
   type IdleFireOutcome,
+  type IdleMode,
   idleFireDecision,
 } from "./context/idle-compaction-rules.js";
 import type { IdleCompactionJobInput } from "./idle-compaction-jobs.js";
-import { ProviderRegistry } from "./providers.js";
+import { type BoundProvider, ProviderRegistry, type ResolvedModelInfo } from "./providers.js";
 import { ACTIVE_RUN_STATUSES } from "./run-jobs.js";
 import { isLive, orgIsLive } from "./run-liveness.js";
 import { RunQueue } from "./run-queue.js";
@@ -51,6 +58,8 @@ const PASSING: IdleFireFacts = {
 
 /** What the job's one `info` line carries besides the outcome (idle compaction spec §7). */
 interface FireLog {
+  /** How the job compacts (compaction model spec §6.3); a row without one is a cache job (C5). */
+  mode?: IdleMode;
   idleRunId?: string;
   estimate?: number;
   ttl?: number;
@@ -65,19 +74,31 @@ interface FireLog {
  * inside `runJob` with the job's org scope. Holds no state between deliveries: every fact comes
  * from the database and the event log, so a duplicate delivery on another replica sees the first
  * delivery's run (an event after `armedSeq`, or an active run) and ends `obsolete` or `busy`.
+ *
+ * The job's mode (compaction model spec §6.3): a `compaction_model` job has no expiry (a late
+ * delivery still runs), requires the compaction model at fire time (`chooseSummarizer` against the
+ * effective definition's model, read from PG on every delivery) and never falls back to the
+ * conversation model or to cache mode; the run it starts carries the mode (`runs.idle_mode`).
  */
 @Injectable()
 export class IdleCompactionJob {
+  /** The org's `compaction` purpose, read from PG on every delivery (nothing cached). */
+  private readonly compactionModel: CompactionModelPort;
+
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(CompactionSettingsService)
     private readonly compaction: Pick<CompactionSettingsService, "resolve">,
     @Inject(AccountsService) private readonly accounts: Pick<AccountsService, "idleCompactionOff">,
     @Inject(ProviderRegistry) private readonly models: Pick<ProviderRegistry, "resolve">,
+    @Inject(ModelPurposesService) purposes: Pick<ModelPurposesService, "resolve">,
     @Inject(CompactionService) private readonly compactions: Pick<CompactionService, "probeIdle">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "startIdleCompaction">,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
-  ) {}
+    @Inject(KERNEL_LOGGER)
+    private readonly log: Pick<KernelLogger, "info" | "warn" | "error" | "debug">,
+  ) {
+    this.compactionModel = compactionModelPort(purposes);
+  }
 
   /**
    * One delivery of `idle-compact-<runId>` (spec §4.3): gathers {@link IdleFireFacts} cheapest
@@ -85,7 +106,8 @@ export class IdleCompactionJob {
    * context=IdleCompaction. A database failure throws (BullMQ retries the job within its attempts).
    */
   async fire(data: IdleCompactionJobInput, now = Date.now()): Promise<IdleFireOutcome | "started"> {
-    const extra: FireLog = {};
+    // a row owed before `mode` existed is a cache-mode job (compaction model spec §6.3, C5)
+    const extra: FireLog = { mode: data.mode ?? "cache" };
     const outcome = await this.decide(data, now, extra);
     this.log.info("idle compaction job", {
       context: "IdleCompaction",
@@ -108,9 +130,8 @@ export class IdleCompactionJob {
     const { orgId, conversationId, armedSeq } = data;
     // a row owed before `mode` existed is a cache-mode job (compaction model spec §6.3, C5)
     const cache = data.mode === "compaction_model" ? undefined : data;
-    const known: Partial<IdleFireFacts> = {
-      mode: cache === undefined ? "compaction_model" : "cache",
-    };
+    const mode: IdleMode = cache === undefined ? "compaction_model" : "cache";
+    const known: Partial<IdleFireFacts> = { mode };
     const failing = (): IdleFireOutcome | undefined => {
       const d = idleFireDecision({ ...PASSING, ...known });
       return d.fire ? undefined : d.outcome;
@@ -214,7 +235,9 @@ export class IdleCompactionJob {
     if (outcome !== undefined) return outcome;
 
     // check 7: the effective definition (the agent's current version under the conversation's
-    // model selection, what the idle run will use) resolves, is enabled, and is the armed call's
+    // model selection, what the idle run will use) resolves and is enabled; in cache mode it is the
+    // armed call's model, in compaction-model mode the compaction model summarizes for it (C6: a
+    // model switch since arming does not end the job, the probe sizes against the new model)
     const version = await t
       .selectFrom("agent_versions")
       .select("definition")
@@ -227,14 +250,11 @@ export class IdleCompactionJob {
         normalizeStoredDefinition(version.definition),
         await readSelection(t, conversationId),
       );
-    let resolved = false;
-    // compaction-model mode: its model checks (C6) come with the compaction-model fire path;
-    // until then such a job ends `no_model` and never falls back to the cache mode
-    if (cache && definition && armed && sameModel(definition.model, armed)) {
+    let ready = false;
+    if (definition && (cache === undefined || (armed && sameModel(definition.model, armed)))) {
+      let model: { provider: BoundProvider; info: ResolvedModelInfo } | undefined;
       try {
-        const { info } = await this.models.resolve(orgId, definition.model);
-        lifetime(info.cache?.defaultTtl);
-        resolved = true;
+        model = await this.models.resolve(orgId, definition.model);
       } catch (err) {
         // unknown, disabled, or a provider list that failed: no model to compact with now
         this.log.warn("idle compaction model not available", {
@@ -244,12 +264,28 @@ export class IdleCompactionJob {
           err,
         });
       }
+      if (model && cache) {
+        lifetime(model.info.cache?.defaultTtl);
+        ready = true;
+      } else if (model) {
+        // the same choice the idle run makes; a cleared, disabled, unavailable or too small
+        // compaction model ends the job (never V, never cache mode); a failed purpose read throws
+        const { summarizer } = await chooseSummarizer(
+          { compactionModel: this.compactionModel, registry: this.models, log: this.log },
+          orgId,
+          { ref: definition.model, provider: model.provider, info: model.info },
+          settings,
+        );
+        ready = summarizer.source === "compaction_model";
+      }
     }
-    known.modelReady = resolved;
+    known.modelReady = ready;
     outcome = failing();
     if (outcome !== undefined || !definition) return outcome ?? "no_model";
 
-    // checks 8 and 9 (S13): the compaction's dry run (reads every event and the media: last)
+    // checks 8 and 9 (S13): the compaction's dry run in the job's mode (reads every event and the
+    // media: last); in compaction-model mode a null probe (C gone since check 7) is `small`, and
+    // in cache mode a compaction model mapped since arming reports no in-context build (C3)
     const probe = await this.compactions.probeIdle(
       {
         orgId,
@@ -261,7 +297,7 @@ export class IdleCompactionJob {
         conversationKind: "chat",
         absorbedUpToSeq: Number(conv.consumed_seq),
       },
-      "cache",
+      mode,
     );
     // an unavailable model or storage during the dry run: nothing to compact with now
     known.probe = probe;
@@ -272,7 +308,7 @@ export class IdleCompactionJob {
 
     // §5.1: the run, under the conversation row lock (checks 1-3 again); a refusal is a message,
     // a run or a queued message that arrived in between
-    const idleRunId = await this.runs.startIdleCompaction(conversationId, armedSeq);
+    const idleRunId = await this.runs.startIdleCompaction(conversationId, armedSeq, mode);
     if (idleRunId === null) {
       // label the refusal by the first check it now fails (the order of checks 1-3)
       if ((await this.readLive(orgId, conversationId)).agent === undefined) return "gone";

@@ -11,12 +11,14 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
+import { ModelPurposesService } from "../../src/models/purposes.js";
 import { CompactionService } from "../../src/runtime/compaction.service.js";
 import { CompactionSettingsService } from "../../src/runtime/compaction-settings.service.js";
 import { IdleCompactionJob } from "../../src/runtime/idle-compaction.js";
 import {
   IDLE_COMPACTION_JOB,
   type IdleCompactionJobData,
+  type IdleCompactionJobInput,
 } from "../../src/runtime/idle-compaction-jobs.js";
 import { IdleReturn } from "../../src/runtime/idle-return.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
@@ -96,6 +98,9 @@ beforeAll(async () => {
             models: [
               { id: "fake-1", contextWindow: 400_000 },
               { id: "fake-nc", contextWindow: 400_000, cache: "none" },
+              // another conversation model (a different window), and the compaction model
+              { id: "fake-2", contextWindow: 300_000, cache: "none" },
+              { id: "fake-c", contextWindow: 200_000, cache: "none" },
             ],
           },
         },
@@ -122,7 +127,7 @@ beforeEach(async () => {
   holdMaintenance = true;
   await truncateTables(
     raw,
-    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.deployment_settings",
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.deployment_settings, capybara.model_purpose_mappings",
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
@@ -217,8 +222,11 @@ async function arm(hooks?: Record<string, unknown>): Promise<Armed> {
   return { orgId, agentId, conv, data: await armedData(conv) };
 }
 
-const fire = (data: IdleCompactionJobData, now?: number) =>
+const fire = (data: IdleCompactionJobInput, now?: number) =>
   withOrgScope(data.orgId, () => k.app.get(IdleCompactionJob).fire(data, now));
+
+/** A logger that drops every line. */
+const QUIET = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
 
 /**
  * Fires `data` directly through a job built from the app's providers with a recording logger (the
@@ -226,8 +234,9 @@ const fire = (data: IdleCompactionJobData, now?: number) =>
  * `info` line.
  */
 async function fireLogged(
-  data: IdleCompactionJobData,
+  data: IdleCompactionJobInput,
   now?: number,
+  compactions: Pick<CompactionService, "probeIdle"> = k.app.get(CompactionService),
 ): Promise<{ outcome: string; line: Record<string, unknown> | undefined }> {
   const lines: Array<[string, Record<string, unknown> | undefined]> = [];
   const job = new IdleCompactionJob(
@@ -235,9 +244,10 @@ async function fireLogged(
     k.app.get(CompactionSettingsService),
     k.app.get(AccountsService),
     k.app.get(ProviderRegistry),
-    k.app.get(CompactionService),
+    k.app.get(ModelPurposesService),
+    compactions,
     k.app.get(RunQueue),
-    { info: (msg, fields) => lines.push([msg, fields]), warn: () => {} },
+    { ...QUIET, info: (msg, fields) => lines.push([msg, fields]) },
   );
   const outcome = await withOrgScope(data.orgId, () => job.fire(data, now));
   return { outcome, line: lines.find(([msg]) => msg === "idle compaction job")?.[1] };
@@ -332,6 +342,7 @@ describe("the idle compaction job", () => {
       conversationId: first.conv,
       runId: first.data.runId,
       idleRunId,
+      mode: "cache",
       ttl: 3600,
     });
     expect(line?.estimate).toBeGreaterThan(50_000);
@@ -441,19 +452,20 @@ describe("the idle compaction job", () => {
       k.app.get(CompactionSettingsService),
       k.app.get(AccountsService),
       k.app.get(ProviderRegistry),
+      k.app.get(ModelPurposesService),
       k.app.get(CompactionService),
       {
         // the conversation is deleted between the job's checks and the run's start
-        startIdleCompaction: async (conversationId, armedSeq) => {
+        startIdleCompaction: async (conversationId, armedSeq, mode) => {
           await db
             .updateTable("conversations")
             .set({ deleted_at: new Date() })
             .where("id", "=", conversationId)
             .execute();
-          return queue.startIdleCompaction(conversationId, armedSeq);
+          return queue.startIdleCompaction(conversationId, armedSeq, mode);
         },
       },
-      { info: () => {}, warn: () => {} },
+      QUIET,
     );
     expect(await withOrgScope(data.orgId, () => job.fire(data))).toBe("gone");
     expect(await idleRuns(conv)).toEqual([]);
@@ -531,6 +543,268 @@ describe("the idle compaction job", () => {
     expect(next.runId).not.toBe(data.runId);
     expect(await fire(next)).toBe("backoff");
     expect(await idleRuns(conv)).toHaveLength(1);
+  });
+});
+
+const FAKE_C = { provider: "model-fake", model: "fake-c" };
+
+/** Maps the org's `compaction` purpose to `model` (null clears the org's mapping). */
+async function mapCompaction(orgId: string, model: typeof FAKE_C | null): Promise<void> {
+  const res = await owner({
+    method: "PUT",
+    url: `/api/v1/orgs/${orgId}/model-purposes/compaction`,
+    payload: { target: model === null ? null : { model, params: {} } },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+}
+
+/** Disables `models` of model-fake in the org. */
+async function disableModels(orgId: string, models: string[]): Promise<void> {
+  const res = await owner({
+    method: "PATCH",
+    url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
+    payload: { disable: models, enable: [] },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+}
+
+/** The conversation's event count: a refused job writes nothing. */
+const eventCount = async (conv: string) => (await eventsOf(db, conv)).length;
+
+const idleModeOf = async (runId: string) =>
+  (
+    await db
+      .selectFrom("runs")
+      .select("idle_mode")
+      .where("id", "=", runId)
+      .executeTakeFirstOrThrow()
+  ).idle_mode;
+
+/**
+ * Compaction-model mode (compaction model spec §6.3): the org maps its `compaction` purpose to
+ * fake-c (200k window, eligible) before the arming turn, so the run's finish owes a
+ * `compaction_model` job (no expiry); the fire job requires C at fire time and the run summarizes
+ * the transcript on it, never on the conversation model.
+ */
+describe("the idle compaction job on the compaction model", () => {
+  async function armC(
+    hooks?: Record<string, unknown>,
+  ): Promise<Omit<Armed, "data"> & { data: IdleCompactionJobData }> {
+    const orgId = await createOrgWithProviders(k, owner, `Acme ${++orgCount}`);
+    // longTtl off: cache mode alone would arm nothing
+    await patchOrg(orgId, { promptCache: { longTtl: false }, compaction: IDLE_SETTINGS });
+    await mapCompaction(orgId, FAKE_C);
+    if (hooks) await probeHooks(orgId, hooks);
+    const agentId = await createAgent(owner, orgId, { provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    const [e] = await withOrgScope(orgId, () =>
+      k.app.get(EventLog).append(conv, [
+        {
+          type: "user_message",
+          payload: { content: [{ type: "text", text: LONG_TEXT }], authorAccountId: ownerId },
+        },
+      ]),
+    );
+    await db
+      .updateTable("conversations")
+      .set({ consumed_seq: String(e?.seq) })
+      .where("id", "=", conv)
+      .execute();
+    await turn(orgId, conv, "echo:ok", 1);
+    const data = (await armedData(conv)) as unknown as IdleCompactionJobData;
+    expect(data.mode).toBe("compaction_model");
+    expect(data).not.toHaveProperty("expiresAt");
+    return { orgId, agentId, conv, data };
+  }
+
+  it("fires through the outbox and the maintenance processor: the idle run summarizes the transcript on the compaction model, as the owner", async () => {
+    const { orgId, conv } = await armC({});
+    holdMaintenance = false;
+    await db
+      .updateTable("outbox")
+      .set({ run_at: sql<Date>`now()` })
+      .where("job_name", "=", IDLE_COMPACTION_JOB)
+      .execute();
+    await drainOutbox(k.app, { jobName: IDLE_COMPACTION_JOB });
+    const idleRunId = await idleRunCompleted(conv);
+    expect(await idleModeOf(idleRunId)).toBe("compaction_model");
+
+    const events = ofRun(await eventsOf(db, conv), idleRunId);
+    expect(events.find((e) => e.type === "run_started")?.payload).toMatchObject({
+      trigger: "compact",
+      compactOrigin: "idle",
+      triggerAccountId: ownerId,
+    });
+    expect(events.find((e) => e.type === "compaction_summary")?.payload).toMatchObject({
+      method: "transcript",
+      model: FAKE_C,
+    });
+    const usage = events.filter((e) => e.type === "usage");
+    expect(usage.length).toBeGreaterThan(0);
+    for (const u of usage) {
+      expect(u.payload).toMatchObject({ purpose: "compaction", ...FAKE_C });
+    }
+    expect(await lastModelRequest(orgId, "compaction")).toMatchObject({
+      purpose: "compaction",
+      conversationId: conv,
+      ...FAKE_C,
+    });
+  });
+
+  it("still starts six hours late (no expiry in compaction-model mode); the log line carries the mode", async () => {
+    const { conv, data } = await armC();
+    const { outcome, line } = await fireLogged(data, Date.now() + 6 * 3_600_000);
+    expect(outcome).toBe("started");
+    const idleRunId = await idleRunCompleted(conv);
+    expect(line).toMatchObject({
+      context: "IdleCompaction",
+      outcome: "started",
+      mode: "compaction_model",
+      idleRunId,
+    });
+    expect(line?.estimate).toBeGreaterThan(50_000);
+    // the cache lifetime fields belong to cache mode only
+    expect(line).not.toHaveProperty("ttl");
+    expect(line).not.toHaveProperty("lateMs");
+  });
+
+  it("is no_model when the purpose was cleared after arming: no run, no call to the conversation model", async () => {
+    const { orgId, conv, data } = await armC({});
+    await mapCompaction(orgId, null);
+    const before = await eventCount(conv);
+    expect(await fire(data)).toBe("no_model");
+    expect(await idleRuns(conv)).toEqual([]);
+    expect(await eventCount(conv)).toBe(before);
+    expect(await lastModelRequest(orgId, "compaction")).toBeUndefined();
+  });
+
+  it("is no_model when the compaction model is disabled in the org", async () => {
+    const { orgId, conv, data } = await armC();
+    await disableModels(orgId, ["fake-c"]);
+    expect(await fire(data)).toBe("no_model");
+    expect(await idleRuns(conv)).toEqual([]);
+  });
+
+  it("still starts after the agent's model changed since arming, sized against the new model (C6)", async () => {
+    const { agentId, conv, data } = await armC();
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      SELECT agent_id, version + 1,
+        jsonb_set(definition, '{model}', '{"provider":"model-fake","model":"fake-2"}'::jsonb),
+        created_by
+      FROM capybara.agent_versions WHERE agent_id = ${agentId}
+      ORDER BY version DESC LIMIT 1`.execute(raw);
+    await sql`UPDATE capybara.agents SET current_version = current_version + 1
+      WHERE id = ${agentId}`.execute(raw);
+    const service = k.app.get(CompactionService);
+    const probes: Array<{ model: unknown; mode: string; window: number | undefined }> = [];
+    const { outcome } = await fireLogged(data, undefined, {
+      probeIdle: async (input, mode) => {
+        const p = await service.probeIdle(input, mode);
+        probes.push({ model: input.agent.model, mode, window: p?.window });
+        return p;
+      },
+    });
+    expect(outcome).toBe("started");
+    expect(probes).toEqual([
+      {
+        model: { provider: "model-fake", model: "fake-2" },
+        mode: "compaction_model",
+        window: 300_000,
+      },
+    ]);
+    const idleRunId = await idleRunCompleted(conv);
+    const summary = ofRun(await eventsOf(db, conv), idleRunId).find(
+      (e) => e.type === "compaction_summary",
+    );
+    expect(summary?.payload).toMatchObject({ method: "transcript", model: FAKE_C });
+  });
+
+  it("a cache-mode job after a compaction model was mapped is no_prefix and writes nothing (C3)", async () => {
+    const { orgId, conv, data } = await arm();
+    expect(data.mode).toBe("cache");
+    await mapCompaction(orgId, FAKE_C);
+    const before = await eventCount(conv);
+    expect(await fire(data)).toBe("no_prefix");
+    expect(await idleRuns(conv)).toEqual([]);
+    expect(await eventCount(conv)).toBe(before);
+  });
+
+  it("is obsolete after a message, busy with an active run, disabled when idle compaction is off", async () => {
+    const stale = await armC();
+    await turn(stale.orgId, stale.conv, "echo:again", 2);
+    expect(await fire(stale.data)).toBe("obsolete");
+    expect(await idleRuns(stale.conv)).toEqual([]);
+
+    const busy = await armC();
+    await db
+      .insertInto("runs")
+      .values({
+        id: randomUUID(),
+        conversation_id: busy.conv,
+        execution_id: null,
+        trigger_account_id: ownerId,
+        status: "waiting",
+        agent_version: 1,
+        trigger_seq: 0,
+      })
+      .execute();
+    expect(await fire(busy.data)).toBe("busy");
+    expect(await idleRuns(busy.conv)).toEqual([]);
+
+    const off = await armC();
+    await patchOrg(off.orgId, { compaction: { ...IDLE_SETTINGS, idleEnabled: false } });
+    expect(await fire(off.data)).toBe("disabled");
+    expect(await idleRuns(off.conv)).toEqual([]);
+  });
+
+  it("is small when a summary already covers all but the latest turn", async () => {
+    const { orgId, conv, data } = await armC();
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/compact`,
+      payload: {},
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const events = await eventsOf(db, conv);
+    expect(events.some((e) => e.type === "compaction_summary")).toBe(true);
+    const { outcome, line } = await fireLogged({
+      ...data,
+      armedSeq: events.at(-1)?.seq as number,
+    });
+    expect(outcome).toBe("small");
+    expect(line?.estimate).toEqual(expect.any(Number));
+    expect(await idleRuns(conv)).toEqual([]);
+  });
+
+  it("a denied summary call fails the run's compaction; the next armed job is in backoff", async () => {
+    const { orgId, conv, data } = await armC({ denyModelPurposes: ["compaction"] });
+    expect(await fire(data)).toBe("started");
+    const idleRunId = await idleRunCompleted(conv);
+    const events = ofRun(await eventsOf(db, conv), idleRunId);
+    expect(events.map((e) => e.type)).toContain("compaction_failed");
+    expect(events.some((e) => e.type === "compaction_summary")).toBe(false);
+
+    await turn(orgId, conv, "echo:again", 3);
+    const next = (await armedData(conv)) as unknown as IdleCompactionJobData;
+    expect(next.runId).not.toBe(data.runId);
+    expect(next.mode).toBe("compaction_model");
+    expect(await fire(next)).toBe("backoff");
+    expect(await idleRuns(conv)).toHaveLength(1);
+  });
+
+  it("a job row without a mode (owed by the previous release) is a cache-mode job (C5)", async () => {
+    const { conv, data } = await arm();
+    const { mode: _mode, ...legacy } = data;
+    const { outcome, line } = await fireLogged(legacy);
+    expect(outcome).toBe("started");
+    expect(line).toMatchObject({ mode: "cache", ttl: 3600 });
+    const idleRunId = await idleRunCompleted(conv);
+    expect(await idleModeOf(idleRunId)).toBe("cache");
+    const summary = ofRun(await eventsOf(db, conv), idleRunId).find(
+      (e) => e.type === "compaction_summary",
+    );
+    expect(summary?.payload).toMatchObject({ method: "in_context" });
   });
 });
 

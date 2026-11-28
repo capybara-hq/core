@@ -2603,7 +2603,7 @@ describe("runModelStep", () => {
 
       describe("idle: the idle compact run (idle compaction spec §4.3 check 9)", () => {
         /**
-         * What `CompactionService.force(input, "idle", mode)` does: a compact run's step 0 with
+         * What `CompactionService.force(input, { origin: "idle", idleMode })` does: a compact run's step 0 with
          * `{ force: true, idle: mode }` (never `manual`, ruling R13).
          */
         const idleInput = async (agent = icAgent()): Promise<ModelStepInput> => {

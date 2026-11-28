@@ -608,12 +608,14 @@ describe("idle compaction core (idle compaction spec §4.3, §5)", () => {
   }
 
   const forceIdle = (input: ForceCompactionInput) =>
-    withOrgScope(input.orgId, () => k.app.get(CompactionService).force(input, "idle"));
+    withOrgScope(input.orgId, () =>
+      k.app.get(CompactionService).force(input, { origin: "idle", idleMode: "cache" }),
+    );
 
   const probe = ({ runId: _r, signal: _s, accountId: _a, ...input }: ForceCompactionInput) =>
     withOrgScope(input.orgId, () => k.app.get(CompactionService).probeIdle(input, "cache"));
 
-  it('force(input, "idle") on a finished conversation summarizes in context', async () => {
+  it("force(input, idle cache) on a finished conversation summarizes in context", async () => {
     const { orgId, conv } = await setup();
     await seedTurns(orgId, conv, 6);
     const input = await forceInput(orgId, conv);
@@ -629,7 +631,7 @@ describe("idle compaction core (idle compaction spec §4.3, §5)", () => {
     expect(capture.compactions[0]?.system).toEqual(capture.sent.at(-1)?.system);
   });
 
-  it('force(input, "idle") with nothing to summarize writes nothing (no compaction_skipped)', async () => {
+  it("force(input, idle cache) with nothing to summarize writes nothing (no compaction_skipped)", async () => {
     const { orgId, conv } = await setup();
     await seedTurns(orgId, conv, 1);
     const before = (await eventsOf(db, conv)).length;
@@ -669,7 +671,7 @@ describe("idle compact runs (idle compaction spec §5.1, §5.2)", () => {
     return last.seq;
   }
 
-  const startIdle = (orgId: string, conv: string, armedSeq: number, mode?: IdleMode) =>
+  const startIdle = (orgId: string, conv: string, armedSeq: number, mode: IdleMode = "cache") =>
     withOrgScope(orgId, () => k.app.get(RunQueue).startIdleCompaction(conv, armedSeq, mode));
 
   const FAKE_C = { provider: "model-fake", model: "fake-c" };

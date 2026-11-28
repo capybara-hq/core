@@ -1154,7 +1154,7 @@ describe("reconstructRequest：基线零漂移", () => {
     }
     const armedSeq = (await eventsOf(db, conv)).findLast((e) => e.type === "run_finished")?.seq;
     const idle = await withOrgScope(orgId, () =>
-      k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number),
+      k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number, "cache"),
     );
     expect(idle).not.toBeNull();
     await waitForTerminal(db, conv, ++n, 30_000);
@@ -1227,7 +1227,7 @@ describe("reconstructRequest：基线零漂移", () => {
       await hold(60_000);
       const armedSeq = (await eventsOf(db, conv)).findLast((e) => e.type === "run_finished")?.seq;
       const idle = await withOrgScope(orgId, () =>
-        k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number),
+        k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number, "cache"),
       );
       expect(idle).not.toBeNull();
       await waitFor(

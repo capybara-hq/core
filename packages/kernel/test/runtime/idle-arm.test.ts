@@ -645,6 +645,22 @@ describe("arming idle compaction on the compaction model", () => {
     await expectNotArmed("personal_off", { settings: noLongTtl, compactionModel: "fake-c" });
   });
 
+  it("a small context skips before the purpose read (no compaction purpose lookup, no fallback warning)", async () => {
+    const purposes = k.app.get(ModelPurposesService);
+    const resolve = vi.spyOn(purposes, "resolve");
+    const warn = vi.spyOn(
+      (k.app.get(IdleArm) as unknown as { log: { warn: (...a: unknown[]) => void } }).log,
+      "warn",
+    );
+    const { orgId, conv } = await setup("fake-1", noLongTtl, "fake-c");
+    const reasons = skipReasons();
+    await turn(orgId, conv, "echo:ok");
+    expect(await idleRows()).toEqual([]);
+    expect(reasons()).toEqual(["small"]);
+    expect(resolve.mock.calls.filter(([, purpose]) => purpose === "compaction")).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("a failing purpose read (a database error) still finishes the run and owes nothing", async () => {
     const purposes = k.app.get(ModelPurposesService);
     const resolve = purposes.resolve.bind(purposes);
