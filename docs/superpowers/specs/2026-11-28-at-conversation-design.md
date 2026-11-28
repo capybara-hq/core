@@ -1,6 +1,6 @@
 # @ conversations: referencing your own conversations from the composer
 
-Status: draft, for maintainer review. Builds on the composer menus spec
+Status: approved by the maintainer (2026-11-28). Builds on the composer menus spec
 (`2026-11-28-composer-menus-design.md`, §1 shell, §4 `@` menu, §5 project files) and the context
 compaction spec (the `compaction_summary` event).
 
@@ -14,14 +14,23 @@ and picking one references that conversation in the message. The agent gets a bo
 time and logged in the user message, so replay is unchanged. The bubble shows the reference as a
 chip that opens the conversation.
 
-## Decisions (proposed)
+## Decisions (maintainer, 2026-11-28)
+
+The proposals below were accepted as written, with these rulings on the review's questions:
+
+- **Excerpt size:** fixed limits in code, as §2 sets them (no setting).
+- **No new fetch tool.** The agent can already read the person's conversations through the
+  `Platform` tool (`conversations.get`, `conversations.events`; facts below). Each reference block
+  carries the conversation id and one neutral line saying more of it can be read there.
+- **Files of the referenced conversation are not included.** The `@` files group already offers
+  them from the file library.
 
 1. Only the sender's own conversations are offered and accepted: same org, same account, a chat
    (never a sub-agent's or an eval conversation), not deleted, not the conversation being written
    in. Conversations are owner-only today; nothing here widens that.
 2. The agent never gets the whole history. Per reference it gets the latest `compaction_summary`
    text when there is one, plus the user / agent text of the turns after it; without a summary, the
-   title plus an excerpt of the last turns. Both are bounded (§2, open question 1).
+   title plus an excerpt of the last turns. Both are bounded (§2).
 3. The digest is built at send time and written into the `user_message` as model-visible English
    text blocks. Request building never reads another conversation; replay reads the log as it is,
    so no `DriftReason`. This mirrors `projectFiles` (composer menus §5).
@@ -29,7 +38,7 @@ chip that opens the conversation.
    and resolved like the `@` resources and project files. Web: a 会话 group in `@` with the `chats`
    icon; the bubble shows conversation chips linking to `/chat/<id>`.
 5. Only text crosses over: no files, attachments, tool results or device state of the referenced
-   conversation (open question 3), and no tool for the agent to read more (open question 2).
+   conversation, and no new tool: reading more goes through the `Platform` tool's existing reads.
 
 ## Facts this design builds on (origin/main, 2026-11-28)
 
@@ -80,6 +89,22 @@ chip that opens the conversation.
   `writable()` refuses it (`conversation.read_only`) and the list never shows it (`kind = 'chat'`);
   a running conversation takes messages (mid-run input); nothing stops a message from naming its
   own conversation.
+- **Reading conversations through the Platform tool.** The builtin `Platform` (one tool, actions
+  `browse` / `search` / `describe` / `call` / `read`; the model calls `{action: "call", operation:
+  "conversations.events", params: {conversationId, before: "end"}}`) has `conversations.list`
+  (title search `q`), `conversations.get` (title, agent, selection, last seq, activity) and
+  `conversations.events` (the event log in order, ≤ 100 events per call, `after` / `before` a seq or
+  `"end"`) in `platform/ops/conversations.ops.ts`. Each is `authz: {orgAction: "agents.use"}` (any
+  member, guests included), `confirm: "read"`, and runs as the run's trigger account
+  (`ctx.actorAccountId`) through the same `ConversationsService` reads as the web, so only that
+  person's own conversations (sub-agent ones under their own root too) are readable; any other id is
+  `conversation.not_found`. Limits (`platform/availability.ts`, `actor.ts`): the actor must be an
+  active member; the org setting `platformTool` `off` hides the tool (`read-only` still allows
+  reads); reads need no person present, so they work in scheduled and other unattended runs (writes
+  do not); an IM run reads as the linked person, and an anonymous IM guest's run reads only the guest
+  account's own conversations; an agent can disable the builtin (`disabledTools`, a template's
+  `tools` allowlist), and then it is absent. The events are the raw log: tool calls and results
+  included, nothing clipped beyond the page size.
 - Icons: `chats` exists in `packages/design/src/icons/paths.ts`. `ComposerMenuItem` takes `icon`.
 
 ## Design
@@ -119,20 +144,23 @@ One text block per reference, after the project file lines and before the upload
 send time, `upToSeq` the last seq read). The text, built by `conversationRefText` (English):
 
 ```
-Referenced conversation: "<title or Untitled conversation>" (another conversation of this person,
-with the agent <agent name>, last active <ISO date>). The text below is quoted from it as context
+Referenced conversation: "<title or Untitled conversation>" (id <id>; another conversation of this
+person, with the agent <agent name>, last active <ISO date>). The text below is quoted from it as context
 for this message. [It was still running when referenced.]
 Summary of the conversation: <summary, clipped>            (only with a summary)
 Latest messages:                                           (turns after the summary, oldest first)
 User: <text>
 Agent: <text>
-End of the referenced conversation.
+End of the referenced conversation. If the Platform tool is available, more of it can be read with
+its conversations.events operation (conversationId <id>).
 ```
 
 - A message's text is the first text block of a `user_message` (the typed text, so a message that
   itself referenced files or conversations brings no nested blocks) and the text blocks of an
   `assistant_message` (no thinking, no tool calls or results).
-- Bounds (open question 1): summary ≤ 12 000 characters (over it: head and tail kept with
+- The closing line is conditional because the text is logged once and the tool's availability can
+  change later (org setting, agent tools); it states the mechanism only.
+- Bounds (fixed in code): summary ≤ 12 000 characters (over it: head and tail kept with
   `[… n characters omitted …]`, so the summary's closing "current work" sections survive); each
   message ≤ 1 500 characters; the whole block ≤ 16 000 characters, older messages dropped first.
   Three refs at most, so ≤ 48 000 characters per message.
@@ -169,28 +197,11 @@ End of the referenced conversation.
 
 The adaptation lives in `ComposerMenu` and `BubbleAttachments`; `apps/web` passes data only.
 
-## Open questions for the maintainer
-
-1. **Excerpt size.** Recommendation: the bounds of §2 (summary ≤ 12 000 characters, ≤ 12
-   messages of ≤ 1 500 each after it, ≤ 16 000 per reference, 3 references): about 4 000 tokens
-   per reference, enough for a summary's decisions and the latest exchange, small next to today's
-   context windows, and fixed in code (no setting until someone asks).
-2. **May the agent fetch more through a tool?** Recommendation: not in this change. A
-   `ReadConversation` tool would read another log at run time with the run's principal, which
-   has to hold for scheduled tasks, IM runs and sub-agents too, and needs its own owner and
-   deletion rules. Its results would be logged like any tool result, so replay would stay
-   correct; it is a follow-up with its own design if digests prove too thin.
-3. **Include files the referenced conversation produced?** Recommendation: no. The file
-   library already puts those files in the same `@` menu (files group), so the person picks the
-   ones that matter and they arrive as normal attachments with the usual checks and limits.
-   Listing names in the digest without access would invite the model to ask for files it
-   cannot open.
-
 ## Not in this change
 
 - Another person's or a shared conversation; a conversation of another org.
-- A tool for the agent to read more of a referenced conversation (open question 2).
-- Files the referenced conversation produced (open question 3).
+- A new tool for reading a referenced conversation (the `Platform` reads cover it).
+- Files the referenced conversation produced.
 - Referencing from IM channels, scheduled tasks or the queue.
 - A title index or full-text search over message bodies.
 
@@ -205,8 +216,8 @@ The adaptation lives in `ComposerMenu` and `BubbleAttachments`; `apps/web` passe
 
 ## Tests (outline)
 
-- Kernel: refs resolve to the summary + later turns and to the excerpt without a summary; bounds
-  and clipping; refusals for another person, another org, deleted, sub-agent, eval, invisible agent,
+- Kernel: refs resolve to the summary + later turns and to the excerpt without a summary; the
+  block carries the id and the closing `conversations.events` line; bounds and clipping; refusals for another person, another org, deleted, sub-agent, eval, invisible agent,
   empty, self, more than 3; duplicates collapse; a retry reads nothing; a running target; the
   first-message route forwards `conversationRefs` and `projectFiles`; the classifier ignores the
   blocks; `reconstruct.test.ts` zero drift before and after, plus a case "referenced conversations".
@@ -226,7 +237,8 @@ The adaptation lives in `ComposerMenu` and `BubbleAttachments`; `apps/web` passe
   `org_id`, so no RLS policy.
 - **Kernel.** The field in the shared `MessageFields` (`createZodDto`), errors registered with zh / en.
 - **Platform tool.** No operation changes: the send routes stay exclusions with their reasons;
-  `conversations.list` already offers the title search.
+  `conversations.list` already offers the title search, and the reference block points to the
+  existing `conversations.events` read.
 - **Web UI / Mobile and shells.** The 会话 rows and the conversation chip are design components with
   size-class forms; `apps/web` passes data through `defineQuery`.
 - **Language / i18n.** New copy zh / en; zh says 会话 and 智能体.
