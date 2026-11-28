@@ -1110,7 +1110,7 @@ export class RunWorker {
   ): Promise<ExecResult> {
     const runId = run.id;
     const conversationId = conv.id;
-    // a compact run from before 0192 (no origin) is a person's
+    // a compact run from before 0195 (no origin) is a person's
     const origin: CompactOrigin = run.compact_origin ?? "manual";
     const existingStart = await this.eventLog.findByIdem(conversationId, `run_started:${runId}`);
     if (run.status === "queued" || startedAt === null) {
