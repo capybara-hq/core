@@ -29,6 +29,7 @@ import { CompactionService } from "./compaction.service.js";
 import { CompactionProgressService } from "./compaction-progress.js";
 import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { ConversationLock } from "./conversation-lock.js";
+import { IdleArm } from "./idle-arm.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { PermissionContextRecorder } from "./permission-context.service.js";
 import { PluginContextService } from "./plugin-context.service.js";
@@ -122,6 +123,8 @@ import { WriteBaseService } from "./write-base.service.js";
     CompactionProgressService,
     // the manual compaction execution of a compact run (spec 2026-11-14 §4.7)
     CompactionService,
+    // a chat run's finish decides whether it owes an idle compaction job (idle compaction spec §4.2)
+    IdleArm,
     // a finished background task wakes an idle conversation (background Bash spec §3)
     BackgroundWake,
     // one quota per key prefix (the org run quota, the org eval quota)

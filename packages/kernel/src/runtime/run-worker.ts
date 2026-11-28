@@ -36,6 +36,7 @@ import { RunAbort, type RunAbortBy, type RunAbortDetail, type RunAbortReason } f
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { CompactionService, type CompactOrigin } from "./compaction.service.js";
 import { ConversationLock, type Lease } from "./conversation-lock.js";
+import { IdleArm } from "./idle-arm.js";
 import { runDeadline, tightestLimit } from "./limits.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
@@ -207,6 +208,8 @@ export class RunWorker {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** The steps' live drafts this process writes for the runs it executes. */
     @Inject(RunDrafts) private readonly drafts: RunDrafts,
+    /** A chat run's finish decides, outside any transaction, whether it arms idle compaction. */
+    @Inject(IdleArm) private readonly idleArm: Pick<IdleArm, "decide">,
     @Optional() @Inject(RUN_HOOKS) private readonly hooks?: RunHooks,
   ) {
     this.loop = loops.create(steps.deps);
@@ -1021,6 +1024,8 @@ export class RunWorker {
           // 超时只消费 loop 实际吸收的消息，不按触发消息兜底（R34）：截止时间可能在第一次吸收之前就已过
           // （如续跑时已超过 started_at + maxRunSeconds），这些消息没有被回复，留给结束后的 ensureRun 起新一轮。
           const consumed = Math.max(outcome.consumedUpToSeq, startConsumed);
+          // idle compaction spec §4.2 (S4): decided before the terminal transaction, never throws
+          const idleCompaction = await this.idleArm.decide(run, conv, outcome.kind);
           await this.finish(
             conversationId,
             runId,
@@ -1029,6 +1034,7 @@ export class RunWorker {
             { type: "run_finished", payload: { reason: outcome.kind, consumedUpToSeq: consumed } },
             true,
             false,
+            idleCompaction,
           );
           this.completed(conversationId, runId, outcome.kind);
           break;
@@ -1037,10 +1043,17 @@ export class RunWorker {
           // completed / max_steps / budget: the loop always absorbed the trigger message; still
           // floor to it
           const consumed = Math.max(outcome.consumedUpToSeq, Number(run.trigger_seq));
-          await this.finish(conversationId, runId, "completed", consumed, {
-            type: "run_finished",
-            payload: { reason: outcome.kind, consumedUpToSeq: consumed },
-          });
+          const idleCompaction = await this.idleArm.decide(run, conv, outcome.kind);
+          await this.finish(
+            conversationId,
+            runId,
+            "completed",
+            consumed,
+            { type: "run_finished", payload: { reason: outcome.kind, consumedUpToSeq: consumed } },
+            true,
+            true,
+            idleCompaction,
+          );
           this.completed(conversationId, runId, outcome.kind);
         }
       }
@@ -1412,8 +1425,11 @@ export class RunWorker {
     event: FinishRunArgs["event"],
     hook = true,
     floorToTrigger = true,
+    /** A chat run's armed idle compaction intent ({@link IdleArm.decide}). */
+    idleCompaction?: FinishRunArgs["idleCompaction"],
   ): Promise<number | null> {
-    // the terminal transaction also writes the run's open fork report and cancels its waits
+    // the terminal transaction also writes the run's open fork report and cancels its waits, and
+    // owes the idle compaction job when the run armed one
     const toSeq = await this.finisher.finish({
       conversationId,
       runId,
@@ -1421,6 +1437,7 @@ export class RunWorker {
       consumed,
       event,
       floorToTrigger,
+      ...(idleCompaction !== undefined && { idleCompaction }),
     });
     if (hook) await this.hooks?.beforeRelease?.(runId, conversationId);
     return toSeq;

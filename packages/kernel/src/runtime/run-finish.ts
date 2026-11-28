@@ -13,6 +13,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { QuestionsService } from "../tools/questions.service.js";
+import { oweIdleCompaction } from "./idle-compaction-jobs.js";
 import {
   ACTIVE_RUN_STATUSES,
   lockWaitRowsIn,
@@ -37,6 +38,21 @@ export interface FinishRunArgs {
    * 超时（max_duration）传 false：loop 没吸收的消息没有被回复，必须留给下一轮（R34）。
    */
   floorToTrigger?: boolean;
+  /**
+   * The idle compaction intent of a chat run that passed the arm decision (idle compaction spec
+   * §4.2, S4): computed by the run worker before the finish, outside any transaction
+   * (`IdleArm.decide`). The `idle-compaction` job is owed only when this call writes the terminal
+   * event, with `armedSeq` = that event's seq.
+   */
+  idleCompaction?: IdleCompactionIntent;
+}
+
+/** What {@link FinishRunArgs.idleCompaction} carries (`runAt` and `expiresAt` in epoch ms). */
+export interface IdleCompactionIntent {
+  orgId: string;
+  cacheCallSeq: number;
+  expiresAt: number;
+  runAt: number;
 }
 
 /**
@@ -64,7 +80,8 @@ export class RunFinish {
 
   /**
    * 在调用方的事务内写运行的终态：会话行锁 → 运行仍未结束才写终态事件、推进 `consumed_seq`、更新 `runs.status`。
-   * It also owes the conversation's ensure-run backstop under the terminal event's seq.
+   * It also owes the conversation's ensure-run backstop under the terminal event's seq, and the
+   * `idle-compaction` job when the caller passed an armed intent (`idleCompaction`).
    *
    * A finished run waits on nothing: its pending approvals and input requests (one asked just
    * before the run failed, while it was still `running`) are cancelled before its terminal event
@@ -187,6 +204,29 @@ export class RunFinish {
       (conv.kind === "chat" || conv.kind === "subagent")
     ) {
       await oweEnsureRun(this.outbox, a.conversationId, seq, conv.org_id);
+    }
+    // the idle compaction job armed for this run's end (idle compaction spec §4.2, S4): due before
+    // the prompt cache expires, stale as soon as anything but a run-less side-call usage follows
+    if (
+      a.idleCompaction !== undefined &&
+      conv?.org_live &&
+      isLive(conv.deleted_at) &&
+      conv.kind === "chat" &&
+      a.idleCompaction.orgId === conv.org_id
+    ) {
+      const { orgId, cacheCallSeq, expiresAt, runAt } = a.idleCompaction;
+      await oweIdleCompaction(
+        this.outbox,
+        {
+          orgId,
+          conversationId: a.conversationId,
+          runId: a.runId,
+          armedSeq: seq,
+          cacheCallSeq,
+          expiresAt,
+        },
+        runAt,
+      );
     }
     if (conv?.org_live) await this.oweTreeWork(a, conv.kind, conv.org_id);
     return seq;
