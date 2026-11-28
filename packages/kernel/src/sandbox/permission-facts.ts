@@ -192,6 +192,8 @@ export class PermissionFacts {
     const hostCeiling = hostGrantCeiling(box, platform, orgLayer);
     return {
       box,
+      /** The provider's support the box was computed with (null: none known yet, or `lifecycle`). */
+      support,
       hostCeiling,
       /** The org's effective hosts: what a device's own host list may narrow, never add to. */
       orgHosts: orgHostsOf(platform, orgLayer),

@@ -5,6 +5,7 @@ import {
   type DeviceServiceStatus,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { LoopbackLivePorts } from "./loopback-live-ports.js";
 import { type DeviceServiceMethods, SandboxService } from "./sandbox.service.js";
 import type { SandboxUseContext } from "./use-context.js";
 
@@ -21,10 +22,16 @@ export const POST_APPLY_ENSURE_TIMEOUT_MS = 30_000;
  * launch and the extension's permission are the caller's (`ctx.deviceAccess`). Every name here is
  * a service id (`<extension>.<name>`, `DEVICE_SERVICE_ID_RE`): the caller namespaces the
  * extension's service names, so the provider never sees a bare name two extensions could share.
+ *
+ * Every ensure sends the provider the service's live loopback port grants (browser loopback port
+ * grants design §4: the whole sorted set, possibly empty; a provider without support ignores it).
  */
 @Injectable()
 export class DeviceServices {
-  constructor(@Inject(SandboxService) private readonly sandbox: SandboxService) {}
+  constructor(
+    @Inject(SandboxService) private readonly sandbox: SandboxService,
+    @Inject(LoopbackLivePorts) private readonly loopback: Pick<LoopbackLivePorts, "livePorts">,
+  ) {}
 
   /**
    * Starts the service in the device, or finds it running (the provider keeps a running one).
@@ -42,17 +49,14 @@ export class DeviceServices {
     return this.sandbox.withDeviceServices(
       use,
       requireServices,
-      (h, p, sig) =>
-        opts.ifRunning === true
-          ? (p.ensureService as NonNullable<typeof p.ensureService>)(
-              h,
-              nameOnlySpec(spec.name),
-              sig,
-              {
-                ifRunning: true,
-              },
-            )
-          : (p.ensureService as NonNullable<typeof p.ensureService>)(h, spec, sig),
+      async (h, p, sig) => {
+        // read under the use, so a grant committed before it is in the set it sends
+        const loopbackPorts = await this.loopback.livePorts(use.orgId, use.deviceId, spec.name);
+        const ensure = p.ensureService as NonNullable<typeof p.ensureService>;
+        return opts.ifRunning === true
+          ? ensure(h, nameOnlySpec(spec.name), sig, { ifRunning: true, loopbackPorts })
+          : ensure(h, spec, sig, { loopbackPorts });
+      },
       signal,
     );
   }
@@ -75,32 +79,59 @@ export class DeviceServices {
     signal: AbortSignal,
   ): Promise<DeviceServiceStatus | null> {
     assertServiceName(name);
-    const found = await this.ifRunningEnsure(use, name, signal);
+    const found = await this.ifRunningEnsure(use.orgId, use.deviceId, name, signal);
     if (found === null || found.state !== "running") return found;
     if ((await this.sandbox.applyLimitsIfRunning(use, signal)) !== "applied") return found;
     // its own budget, never what the wait left of the caller's: a provider restarts the service
     // on the new network here (device-local), so a spent caller signal must not skip it
-    return this.ifRunningEnsure(use, name, AbortSignal.timeout(POST_APPLY_ENSURE_TIMEOUT_MS));
+    return this.ifRunningEnsure(
+      use.orgId,
+      use.deviceId,
+      name,
+      AbortSignal.timeout(POST_APPLY_ENSURE_TIMEOUT_MS),
+    );
   }
 
-  /** An `ifRunning` ensure on the instance recorded now; null without a running instance. */
-  private async ifRunningEnsure(
-    use: SandboxUseContext,
+  /**
+   * Sends the service's live loopback port set to the running service (a grant, a revoke, an
+   * expiry or a narrowing changed it): an `ifRunning` ensure only, no limits applied (the set is
+   * the service's own, not the device's). A provider restarts the service when its set changed and
+   * keeps it otherwise; a stopped service or instance needs nothing now (its next ensure sends the
+   * set). The status, or null without a running instance.
+   */
+  async refreshLoopback(
+    orgId: string,
+    deviceId: string,
     name: string,
     signal: AbortSignal,
   ): Promise<DeviceServiceStatus | null> {
-    const current = await this.sandbox.currentInstance(use.deviceId);
+    assertServiceName(name);
+    return this.ifRunningEnsure(orgId, deviceId, name, signal);
+  }
+
+  /**
+   * An `ifRunning` ensure on the instance recorded now, with the service's live loopback ports;
+   * null without a running instance.
+   */
+  private async ifRunningEnsure(
+    orgId: string,
+    deviceId: string,
+    name: string,
+    signal: AbortSignal,
+  ): Promise<DeviceServiceStatus | null> {
+    const current = await this.sandbox.currentInstance(deviceId);
     if (!current) return null;
     const r = await this.sandbox.ifRunning(
-      use.deviceId,
+      deviceId,
       { createdAt: current.createdAt },
       async (p, h, sig) => {
         requireServices(p);
+        const loopbackPorts = await this.loopback.livePorts(orgId, deviceId, name);
         return (p.ensureService as NonNullable<typeof p.ensureService>)(
           h,
           nameOnlySpec(name),
           sig,
-          { ifRunning: true },
+          { ifRunning: true, loopbackPorts },
         );
       },
       signal,
