@@ -239,6 +239,7 @@ function ConversationChip({ item }: { item: BubbleAttachment }): JSX.Element {
         className="cb-bubble-file cb-bubble-conv"
         data-part="attachment"
         data-kind="conversation"
+        title={title}
       >
         {body}
       </span>
@@ -251,7 +252,6 @@ function ConversationChip({ item }: { item: BubbleAttachment }): JSX.Element {
       data-part="attachment"
       data-kind="conversation"
       aria-label={fillCopy(t("attachment.openConversation"), { title })}
-      title={title}
     >
       {body}
       <LinkPendingMark />

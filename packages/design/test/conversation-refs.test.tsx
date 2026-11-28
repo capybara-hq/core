@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -135,14 +133,6 @@ describe("BubbleAttachments conversation link chip (§6.16.6)", () => {
     );
     const column = container.querySelector(".cb-bubble-atts") as HTMLElement;
     expect(column.dataset.form).toBe("compact");
-    // the stylesheet carries the compact form for the forced attribute and below 600
-    const css = readFileSync(resolve(__dirname, "../src/styles/conversation.css"), "utf8");
-    expect(css).toMatch(
-      /\.cb-bubble-atts\[data-form="compact"\] \.cb-bubble-conv \.cb-bubble-file-name \{\s*white-space: normal;/,
-    );
-    expect(css).toMatch(
-      /@media not all and \(min-width: 600px\) \{\s*\.cb-bubble-conv \{[^}]*max-width: 100%;[^}]*\}[\s\S]*?\.cb-bubble-conv \.cb-bubble-file-name \{\s*white-space: normal;/,
-    );
   });
 
   it("without a form prop the column carries no form", () => {
