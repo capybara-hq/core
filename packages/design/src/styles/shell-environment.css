@@ -12,9 +12,16 @@
   inherits: true;
   initial-value: 0px;
 }
-/* How far the paper starts below its usual place: the rail drop in the rail's form from 600 up,
-   else 0 (below). Registered for the same reason. */
+/* How far the paper starts below its usual place: from 600 up the rail drop in the rail's form or
+   the end controls' row, else 0 (below). Registered for the same reason. */
 @property --cb-shell-paper-drop {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+/* How far the paper starts below its usual place for end controls alone: the end row from 600 up,
+   else 0 (below). Registered so a style query can tell the end band from the start one. */
+@property --cb-shell-end-drop {
   syntax: "<length>";
   inherits: true;
   initial-value: 0px;
@@ -153,6 +160,13 @@
   }
 }
 :root[data-shell="desktop"] .cb-shell-column {
+  /* The top row a first-level head reserves: the row only where controls reach into the content
+     column (end controls, or start controls past the visible sidebar), else 0: beside the full
+     sidebar the lights lie over the sidebar, and the head starts as in a browser. */
+  --cb-shell-head-row: min(
+    var(--cb-shell-row),
+    calc((var(--cb-shell-reserve-end) + var(--cb-shell-column-reserve)) * 100000)
+  );
   --cb-shell-column-reserve: max(
     0px,
     calc(
@@ -264,24 +278,37 @@
    the paper's first row after the lights and the band's sidebar toggle: the conversation title bar,
    or a deeper page's path row. Nothing moves in the DOM: the row stays the first row of its paper's
    box and keeps every top-row rule above (its height, its start after the toggle, its end clear of
-   end controls, its filler); only the paper's colour starts below it, `space.2` under the band, as
-   the paper lies `space.2` under the window's top edge elsewhere, and the next row (the thread, the
-   title row) starts there. A first-level page has no path row: its band holds only the lights and
-   the toggle, and its head starts inside the paper. The rail's form follows the visible sidebar as
+   end controls, its filler); only the paper's colour starts below it, at the band's bottom edge
+   (the controls' bottom), and the next row (the thread, the title row) starts there. The row is
+   centred on the controls (the band is as high as their bottom edge from the window's top), so
+   its icons lie as far above the paper as below the window's top edge (optical centring,
+   maintainer decision 2026-11-28), and the paper never starts above the controls' bottom: caption
+   buttons' square hover grounds end where the paper starts. A first-level page has no path row:
+   its band holds only the lights and the toggle, and its head starts inside the paper. The rail's form follows the visible sidebar as
    `--cb-shell-lead` does; the full sidebar, a banner, compact and a window without start controls
-   past the rail keep 0. */
+   past the rail keep 0.
+   End controls (caption buttons at the window's end edge, #1065) make the same band in every form
+   from 600 up, the full sidebar's too: the controls would otherwise lie over the paper's top end
+   corner. The band is the end row (`--cb-shell-row-end`, 0 without end controls) and holds the
+   paper's first row beside the controls, clear of them. Start and end differ on purpose
+   (maintainer decision 2026-11-28): beside the full sidebar start controls sit in the sidebar's
+   brand row, so the paper keeps its first row there. Only one of the two rows is ever non-zero. */
 @media (min-width: 600px) {
+  :root[data-shell="desktop"] .cb-shell:not([data-banner="true"]) {
+    --cb-shell-paper-drop: var(--cb-shell-row-end);
+    --cb-shell-end-drop: var(--cb-shell-row-end);
+  }
   :root[data-shell="desktop"]
     .cb-shell:not([data-banner="true"]):has(
       > .cb-sidebar[data-mode="rail"]:not([data-responsive="true"])
     ) {
-    --cb-shell-paper-drop: var(--cb-shell-rail-drop);
+    --cb-shell-paper-drop: max(var(--cb-shell-rail-drop), var(--cb-shell-row-end));
   }
 }
 @media (min-width: 600px) and (max-width: 840px) {
   :root[data-shell="desktop"]
     .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-responsive="true"]) {
-    --cb-shell-paper-drop: var(--cb-shell-rail-drop);
+    --cb-shell-paper-drop: max(var(--cb-shell-rail-drop), var(--cb-shell-row-end));
   }
 }
 @media (min-width: 841px) {
@@ -289,7 +316,7 @@
     .cb-shell:not([data-banner="true"]):has(
       > .cb-sidebar[data-responsive="true"][data-collapsed="true"]
     ) {
-    --cb-shell-paper-drop: var(--cb-shell-rail-drop);
+    --cb-shell-paper-drop: max(var(--cb-shell-rail-drop), var(--cb-shell-row-end));
   }
 }
 /* Where the rail drops below the band no hairline closes the band: the band, the rail and the
@@ -310,7 +337,8 @@
   );
 }
 /* An open side panel takes the window's end edge from the title bar: the panel starts below the
-   end controls instead (none on macOS, where the controls sit at the start). */
+   end controls instead (none on macOS, where the controls sit at the start). Inside an AppShell
+   from 600 up end controls make the band (below), which overrides these. */
 /* A maximised panel lies under the title bar, which keeps the end edge. */
 :root[data-shell="desktop"] .cb-conv-page:has(> .cb-conv-panel:not([data-full])) .cb-title-bar {
   padding-right: calc(var(--cb-space-3) + var(--cb-inset-right));
@@ -338,12 +366,13 @@
     container: cb-head / inline-size;
     padding-top: max(0px, calc(var(--cb-space-5) - var(--cb-shell-row) * 100000));
   }
-  /* A head without a path row (a first-level page, layered shell spec §3): its title row (or a
-     title-less head's actions) starts below the top row, so the actions keep clear of end
-     controls and the title of start controls past a rail; the window drags by the paper's top
-     gutter and the row's own filler. */
+  /* A head without a path row (a first-level page, layered shell spec §3): where controls reach
+     into the content column its title row (or a title-less head's actions) starts below the top
+     row, so the actions keep clear of end controls and the title of start controls past a rail;
+     elsewhere (the full sidebar beside the lights) it starts as in a browser (maintainer decision
+     2026-11-28). The window drags by the paper's top gutter and the row's own filler. */
   :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
-    padding-top: max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)));
+    padding-top: max(var(--cb-space-5), calc(var(--cb-shell-head-row) - var(--cb-space-2)));
   }
   /* In-paper top rows end with the window's top row: the paper starts space.2 below its edge. A
      maximised panel lies under the title bar, so only the inline panel pads below end controls. */
@@ -358,8 +387,8 @@
   }
   /* The paper's top gutter starts after the start reserve that reaches past the sidebar (the band's
      sidebar toggle past a rail lies there). Over a head without a path row it is as high as the
-     top row, so the empty band above the title drags the window; the head starts below it (its
-     padding above), so no control lies under it. */
+     row that head reserves, so the empty band above the title drags the window; the head starts
+     below it (its padding above), so no control lies under it. */
   :root[data-shell="desktop"] .cb-shell-gutter {
     left: var(--cb-shell-column-reserve, 0px);
   }
@@ -372,10 +401,7 @@
         )
     )
     > .cb-shell-gutter {
-    height: calc(
-      max(var(--cb-space-2), var(--cb-shell-row)) +
-      min(var(--cb-space-2), calc(var(--cb-shell-paper-drop) * 100000))
-    );
+    height: max(var(--cb-space-2), var(--cb-shell-head-row));
   }
   :root[data-shell="desktop"]
     .cb-shell-main
@@ -421,7 +447,7 @@
 @container not style(--cb-shell-paper-drop: 0px) {
   /* The paper's box (a page's shell main, the conversation's papers) starts at the window's top
      edge, so its first row is the band's whole height and centred on the lights; the paper's
-     colour is a layer that starts space.2 below the band, and the box keeps its clip. */
+     colour is a layer that starts at the band's bottom edge, and the box keeps its clip. */
   :root[data-shell="desktop"] .cb-shell-column > .cb-shell-main:not(:has(.cb-conv-page)) {
     margin-top: 0;
   }
@@ -438,7 +464,7 @@
   :root[data-shell="desktop"] .cb-shell-main .cb-conv-main::before {
     position: absolute;
     z-index: -1;
-    inset: calc(var(--cb-shell-row) + var(--cb-space-2)) 0 0;
+    inset: var(--cb-shell-row) 0 0;
     border-radius: var(--cb-radius-md);
     background: var(--cb-bg);
     content: "";
@@ -446,7 +472,6 @@
   /* The band's rows: the conversation title bar and a deeper page's path row, as high as the band. */
   :root[data-shell="desktop"] .cb-shell-main .cb-conv-main > .cb-title-bar {
     height: max(var(--cb-layout-title-bar), var(--cb-shell-row));
-    margin-bottom: var(--cb-space-2);
   }
   :root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path {
     min-height: var(--cb-shell-row);
@@ -454,10 +479,10 @@
   /* The next row starts on the paper: the thread right below the title bar, the title row space.5
      into the paper (a head's top padding), and a first-level head (no path row) inside it. */
   :root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path + .cb-pageheader-row {
-    margin-top: calc(var(--cb-space-2) + var(--cb-space-5));
+    margin-top: var(--cb-space-5);
   }
   :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
-    padding-top: calc(var(--cb-shell-row) + var(--cb-space-2) + var(--cb-space-5));
+    padding-top: calc(var(--cb-shell-row) + var(--cb-space-5));
   }
   /* The conversation's title bar is the band's whole row: it runs to the window's end edge over
      the inline right panel (its end group, the panel and action toggles, at the far end, clear of
@@ -480,11 +505,52 @@
     );
   }
   :root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full]) {
-    margin-top: calc(var(--cb-shell-row) + var(--cb-space-2));
+    margin-top: var(--cb-shell-row);
     padding-top: 0;
   }
   :root[data-shell="desktop"] .cb-shell-main .cb-conv-panel > .cb-drag-fill {
     height: 0;
+  }
+}
+/* A first-level page in the end controls' band (#1065, maintainer decision 2026-11-28): its head's
+   title row (or a title-less head's actions) is the band's row beside the caption buttons, as the
+   conversation title bar and a deeper page's path row are, so the band is never empty there: the
+   row is as high as the band and centred in it, its end (the head's actions) clear of the controls
+   past the frame's centring margin, and the next row (the tab row, the notice) or the body starts
+   on the paper below it with its usual head gap. The paper's top gutter keeps space.2 high: the
+   row's own filler drags the band, and the gutter must not lie over the row's controls. The
+   start band (the rail's form) keeps its first-level band empty but for the lights and the toggle. */
+@container not style(--cb-shell-end-drop: 0px) {
+  :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
+    padding-top: 0;
+  }
+  :root[data-shell="desktop"]
+    .cb-shell-main
+    .cb-template-head:not(:has(.cb-pageheader-path))
+    :is(.cb-pageheader > .cb-pageheader-row, .cb-pageheader-titleless) {
+    align-items: center;
+    min-height: var(--cb-shell-row);
+    padding-right: max(
+      0px,
+      calc(
+        var(--cb-shell-reserve-end) +
+        var(--cb-space-2) -
+        var(--cb-content-pad) -
+        var(--cb-inset-right) -
+        max(0px, (100cqw - var(--cb-layout-content)) / 2)
+      )
+    );
+  }
+  :root[data-shell="desktop"]
+    .cb-shell-column:has(
+      .cb-template-head
+        :is(
+          .cb-pageheader > .cb-pageheader-row:not(.cb-pageheader-path + .cb-pageheader-row),
+          .cb-pageheader-titleless > h1 + .cb-drag-fill
+        )
+    )
+    > .cb-shell-gutter {
+    height: var(--cb-space-2);
   }
 }
 /* Below 600 the floating row is the top row: centred on the controls and clear of them. The side
