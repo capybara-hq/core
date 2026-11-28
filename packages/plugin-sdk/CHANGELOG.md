@@ -1,5 +1,48 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.87
+
+### Minor Changes
+
+- 0a86a3c: Add personal inbox items (collaboration spec §4.9). Extensions with `permissions.inbox` post
+  items for one member with `ctx.inbox.post` (title, body, a link to their own `/p/<plugin>/` pages,
+  up to three buttons naming their UI actions, an expiry, an optional dedupe key) and close them with
+  `ctx.inbox.resolve`. The kernel stores them in `inbox_items` (migration 0192), lists them in the
+  person's inbox only, calls a button's UI action as the person who clicks
+  (`POST /orgs/:orgId/inbox/items/:id/actions/:actionId`) and resolves the item, or dismisses it
+  (`POST …/dismiss`, also the Platform operation `inbox.item-dismiss`). New items push under the new
+  category `inbox`. A trigger event stopped at the chain depth now posts a kernel item to the owner
+  of the chain's last automation. The review shows `permissions.inbox` (blocking, not sensitive),
+  `capybara-plugin check` reports `perm-inbox`, and the `fake-trigger-source` fixture gains
+  `ctx.inbox` and an `org.page` view with a recording UI action.
+  
+  `ctx.triggers.causeOf(call)` returns a handle (24 hours, bound to the call's org and run and to the
+  extension; table `trigger_cause_handles`, migration 0193) that a `ctx.queue` job passes as
+  `emit({ cause: { handle } })`, so a queued event keeps the call's chain depth and self-trigger
+  check. The trigger event sweep no longer flushes a window the dispatcher just opened, backs off
+  re-owing a lost window and gives up after a day, deletes expired handles, and deletes inbox items
+  closed or past their expiry more than `inbox.retentionDays` (new platform config, default 30) ago.
+  
+  `ctx.agents.usableBy`, `ctx.conversations.bySubject` and `ctx.people.get / search` give pages
+  read-only org facts, each behind its own permission (`permissions.agents: { read: true }`,
+  `permissions.conversations: { subjects: true }`, `permissions.people: { read: true }`; blocking,
+  not sensitive). `usableBy` lists the agents an active member may use; `bySubject` returns the
+  metadata (state from the latest run, never content) of the live conversations of the extension's
+  own subjects; `people` returns members' names and avatars (at most 200 ids per `get`, `search`
+  limit 50), never email. A call needs the extension enabled in the org (`CtxReadError`
+  `org_disabled`). `capybara-plugin check` reports `perm-agents`, `perm-conversations` and
+  `perm-people`.
+- f1a8d71: Add the observe hook `run.lifecycle` (`RunLifecyclePayload`, `RunLifecycleDeclineReason`;
+  collaboration spec §4.8). The plugin named by a conversation's subject hears, durably and at least
+  once, each phase of the conversation's runs: `started`, `waiting` (on a person: `waitingOn`
+  `approval` or `input`), `resumed` (that wait cleared and the run continues), `finished`, `failed`
+  and `aborted`; compact runs are never reported. A directed event's source plugin hears
+  `offer_declined` when the work was not run, with a `reason`: `off` (the person's rule),
+  `declined` (the person declined the offer), `paused` (their acceptance automation is paused),
+  `expired` (the offer stayed unanswered for seven days) or `undelivered` (the kernel gave up
+  routing the event). Only a plugin that declares the hook in `permissions.hooks` and is enabled in
+  the org is told, checked when the change commits and again at delivery.
+
 ## 0.1.0-rc.86
 
 ### Minor Changes

@@ -1,5 +1,52 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.135
+
+### Patch Changes
+
+- 14e987a: Directed events and acceptance (collaboration spec §4.4): an extension's directed event (work
+  assigned to a member and their agent) follows the member's acceptance rule for its source, else
+  the org's `automations.directedDefault` (default `auto`). `auto` makes the member's acceptance
+  automation once (subject mode, no grants, asks the member on anything outside them) and runs the
+  work; `confirm` posts a work offer to the member's inbox (accept runs it, decline tells whoever
+  assigned it; an offer left unanswered for seven days expires and the trigger event sweep closes
+  it); `off` runs nothing. Members set their rules on `/account/automations` (`GET`/`PUT
+  automations/acceptance`, Platform operations `automations.acceptance-get`/`-set`); offers are
+  accepted or declined only by the member on the web (`POST automations/offers/:id/accept|decline`).
+  Directed events stored before this release are dispatched again by migration 0194.
+- 0a86a3c: Add personal inbox items (collaboration spec §4.9). Extensions with `permissions.inbox` post
+  items for one member with `ctx.inbox.post` (title, body, a link to their own `/p/<plugin>/` pages,
+  up to three buttons naming their UI actions, an expiry, an optional dedupe key) and close them with
+  `ctx.inbox.resolve`. The kernel stores them in `inbox_items` (migration 0192), lists them in the
+  person's inbox only, calls a button's UI action as the person who clicks
+  (`POST /orgs/:orgId/inbox/items/:id/actions/:actionId`) and resolves the item, or dismisses it
+  (`POST …/dismiss`, also the Platform operation `inbox.item-dismiss`). New items push under the new
+  category `inbox`. A trigger event stopped at the chain depth now posts a kernel item to the owner
+  of the chain's last automation. The review shows `permissions.inbox` (blocking, not sensitive),
+  `capybara-plugin check` reports `perm-inbox`, and the `fake-trigger-source` fixture gains
+  `ctx.inbox` and an `org.page` view with a recording UI action.
+  
+  `ctx.triggers.causeOf(call)` returns a handle (24 hours, bound to the call's org and run and to the
+  extension; table `trigger_cause_handles`, migration 0193) that a `ctx.queue` job passes as
+  `emit({ cause: { handle } })`, so a queued event keeps the call's chain depth and self-trigger
+  check. The trigger event sweep no longer flushes a window the dispatcher just opened, backs off
+  re-owing a lost window and gives up after a day, deletes expired handles, and deletes inbox items
+  closed or past their expiry more than `inbox.retentionDays` (new platform config, default 30) ago.
+  
+  `ctx.agents.usableBy`, `ctx.conversations.bySubject` and `ctx.people.get / search` give pages
+  read-only org facts, each behind its own permission (`permissions.agents: { read: true }`,
+  `permissions.conversations: { subjects: true }`, `permissions.people: { read: true }`; blocking,
+  not sensitive). `usableBy` lists the agents an active member may use; `bySubject` returns the
+  metadata (state from the latest run, never content) of the live conversations of the extension's
+  own subjects; `people` returns members' names and avatars (at most 200 ids per `get`, `search`
+  limit 50), never email. A call needs the extension enabled in the org (`CtxReadError`
+  `org_disabled`). `capybara-plugin check` reports `perm-agents`, `perm-conversations` and
+  `perm-people`.
+- Updated dependencies [14e987a]
+- Updated dependencies [0a86a3c]
+- Updated dependencies [f1a8d71]
+  - @capybara-hq/kernel@0.1.0-rc.109
+
 ## 0.1.0-rc.134
 
 ### Patch Changes
