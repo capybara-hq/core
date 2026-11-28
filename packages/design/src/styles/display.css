@@ -1680,6 +1680,18 @@ a.cb-attachment:hover {
   border-radius: var(--cb-radius-md);
   font-size: var(--cb-type-h1-size);
 }
+/* Mobile sizes (MOBILE_SIZE_QUERY): --cb-radius-sm scales to 12px and --cb-radius-md to 20px,
+   which would round small square agent avatars into circles like people. Cap square avatars at
+   25% here so desktop keeps exact radius.sm / radius.md tokens while compact/touch stays square
+   (spec §6.30, #1013). */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-avatar {
+    border-radius: min(var(--cb-radius-sm), 25%);
+  }
+  .cb-avatar[data-size="64"] {
+    border-radius: min(var(--cb-radius-md), 25%);
+  }
+}
 /* A person's avatar (spec §6.30): a circle, the initial muted on selected. */
 .cb-avatar[data-shape="circle"] {
   border-radius: 50%;
