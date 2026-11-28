@@ -40,6 +40,7 @@ import {
   startKernel,
   type TestKernel,
   waitFor,
+  waitForEvent,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -825,6 +826,123 @@ describe("idle compact runs (idle compaction spec §5.1, §5.2)", () => {
       await runQueue.resume();
     }
     await runStatus(idle as string, "completed");
+  });
+
+  it("stays quiet in the conversation list: not running while it runs, not moved by its events (spec §6)", async () => {
+    const { orgId, conv } = await setup();
+    // no suggestion job appends a run-less usage (which moves the list) while the test compares
+    const off = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { promptSuggestions: "off" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    await seedTurns(orgId, conv, 6);
+    // and the title job's usage has landed
+    await waitForEvent(
+      db,
+      conv,
+      (e) => e.type === "usage" && (e.payload as { purpose?: string }).purpose === "title",
+      20_000,
+      "title usage",
+    );
+    const armedSeq = await armedSeqOf(conv);
+    type Row = { id: string; activity: string | null; updatedAt: string; lastSeq: number };
+    const listed = async (): Promise<Row | undefined> => {
+      const res = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations` });
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { conversations: Row[] }).conversations.find((c) => c.id === conv);
+    };
+    const before = await listed();
+    expect(before?.activity).toBeNull();
+    await holdModelCalls(orgId, 10_000);
+    const runId = await startIdle(orgId, conv, armedSeq);
+    expect(runId).not.toBeNull();
+    const idle = runId as string;
+    await waitFor(
+      async () => {
+        const raw = await redis.get(compactionProgressKey(idle));
+        return raw !== null && (JSON.parse(raw) as { phase: string }).phase === "summarizing"
+          ? raw
+          : null;
+      },
+      20_000,
+      "the idle compaction reached its model call",
+    );
+    // run_started is in the log and the run is running: the list still shows the conversation idle
+    const during = await listed();
+    expect(during?.lastSeq).toBeGreaterThan(before?.lastSeq as number);
+    expect(during).toEqual({ ...before, lastSeq: during?.lastSeq });
+    const running = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations?state=running`,
+    });
+    expect((running.json() as { conversations: Row[] }).conversations).toEqual([]);
+    await holdModelCalls(orgId, 0);
+    await k.app.get(RunAbort).request(idle, null, { reason: "superseded" });
+    await runStatus(idle, "aborted");
+    const after = await listed();
+    expect(after).toEqual({ ...before, lastSeq: after?.lastSeq });
+
+    // a person's message still moves it
+    await postMessage(owner, orgId, conv, "echo:back");
+    // six turns, the aborted idle run, then this message's run
+    await waitForTerminal(db, conv, 8, 20_000);
+    expect((await listed())?.updatedAt).not.toBe(before?.updatedAt);
+  });
+
+  it("any other end of an idle run (here a person's stop) leaves the queue unpaused: its end is not in the timeline", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const armedSeq = await armedSeqOf(conv);
+    await holdModelCalls(orgId, 10_000);
+    const runId = await startIdle(orgId, conv, armedSeq);
+    expect(runId).not.toBeNull();
+    const idle = runId as string;
+    await waitFor(
+      async () => {
+        const raw = await redis.get(compactionProgressKey(idle));
+        return raw !== null && (JSON.parse(raw) as { phase: string }).phase === "summarizing"
+          ? raw
+          : null;
+      },
+      20_000,
+      "the idle compaction reached its model call",
+    );
+    // a queue item behind the idle run, written directly (adding one through the queue would
+    // preempt the idle run as superseded)
+    await db
+      .insertInto("conversation_queue")
+      .values({
+        id: randomUUID(),
+        conversation_id: conv,
+        account_id: ownerId,
+        position: "1",
+        text: "echo:queued",
+        content: JSON.stringify([{ type: "text", text: "echo:queued" }]),
+        client_message_id: randomUUID(),
+      })
+      .execute();
+    await holdModelCalls(orgId, 0);
+    await k.app.get(RunAbort).request(idle, ownerId);
+    await runStatus(idle, "aborted");
+    expect(ev(await eventsOf(db, conv), "run_aborted").map((e) => e.payload.reason)).toEqual([
+      "user",
+    ]);
+    const row = await db
+      .selectFrom("conversations")
+      .select("queue_paused")
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(row.queue_paused).toBe(false);
+    await waitFor(
+      async () =>
+        ev(await eventsOf(db, conv), "user_message").some((e) =>
+          e.payload.content.some((b) => b.type === "text" && b.text === "echo:queued"),
+        ) || null,
+      20_000,
+      "the queued message was sent",
+    );
   });
 
   it("a superseded stop ends the idle run: run_aborted without an account, no summary, the queue not paused, the tree not held (S3)", async () => {

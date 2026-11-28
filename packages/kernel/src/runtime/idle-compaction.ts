@@ -135,36 +135,8 @@ export class IdleCompactionJob {
     };
     lifetime(armed?.request?.cacheTtl);
 
-    // check 1: org, conversation (chat), agent; the owner can still send in it (the idle run runs
-    // as the owner: `RunQueue`'s rule for a person's message, an active account that sees the agent)
-    const conv = await t
-      .selectFrom("conversations")
-      .select(["account_id", "agent_id", "kind", "consumed_seq", "source", "deleted_at"])
-      .where("id", "=", conversationId)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    let agent: { current_version: number } | undefined;
-    if (conv && isLive(conv.deleted_at) && conv.kind === "chat" && conv.account_id !== null) {
-      const ownerId = conv.account_id;
-      const [orgLive, owner, row] = await Promise.all([
-        orgIsLive(t, orgId),
-        t
-          .selectFrom("accounts")
-          .select("id")
-          .where("id", "=", ownerId)
-          .where("status", "=", "active")
-          .executeTakeFirst(),
-        t
-          .selectFrom("agents")
-          .select("current_version")
-          .where("id", "=", conv.agent_id)
-          .where("org_id", "=", orgId)
-          .where("deleted_at", "is", null)
-          .where(visibleTo(ownerId))
-          .executeTakeFirst(),
-      ]);
-      if (orgLive && owner !== undefined) agent = row;
-    }
+    // check 1: org, conversation (chat), agent; the owner can still send in it
+    const { conv, agent } = await this.readLive(orgId, conversationId);
     known.live = conv !== undefined && agent !== undefined;
     let outcome = failing();
     if (outcome !== undefined || !conv || conv.account_id === null || !agent) {
@@ -289,9 +261,51 @@ export class IdleCompactionJob {
     // §5.1: the run, under the conversation row lock (checks 1-3 again); a refusal is a message,
     // a run or a queued message that arrived in between
     const idleRunId = await this.runs.startIdleCompaction(conversationId, armedSeq);
-    if (idleRunId === null) return (await stale()) ? "obsolete" : "busy";
+    if (idleRunId === null) {
+      // label the refusal by the first check it now fails (the order of checks 1-3)
+      if ((await this.readLive(orgId, conversationId)).agent === undefined) return "gone";
+      return (await stale()) ? "obsolete" : "busy";
+    }
     extra.idleRunId = idleRunId;
     return "started";
+  }
+
+  /**
+   * Check 1's reads: the conversation (live, chat, owned), and its agent when the org is live, the
+   * owner's account active and the agent visible to them (the idle run runs as the owner:
+   * `RunQueue`'s rule for a person's message); `agent` undefined = not live.
+   */
+  private async readLive(orgId: string, conversationId: string) {
+    const t = this.kdb.db;
+    const conv = await t
+      .selectFrom("conversations")
+      .select(["account_id", "agent_id", "kind", "consumed_seq", "source", "deleted_at"])
+      .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    let agent: { current_version: number } | undefined;
+    if (conv && isLive(conv.deleted_at) && conv.kind === "chat" && conv.account_id !== null) {
+      const ownerId = conv.account_id;
+      const [orgLive, owner, row] = await Promise.all([
+        orgIsLive(t, orgId),
+        t
+          .selectFrom("accounts")
+          .select("id")
+          .where("id", "=", ownerId)
+          .where("status", "=", "active")
+          .executeTakeFirst(),
+        t
+          .selectFrom("agents")
+          .select("current_version")
+          .where("id", "=", conv.agent_id)
+          .where("org_id", "=", orgId)
+          .where("deleted_at", "is", null)
+          .where(visibleTo(ownerId))
+          .executeTakeFirst(),
+      ]);
+      if (orgLive && owner !== undefined) agent = row;
+    }
+    return { conv, agent };
   }
 
   /** S1: an event after `armedSeq` that `isIdleNeutralEvent` rejects, in SQL. */

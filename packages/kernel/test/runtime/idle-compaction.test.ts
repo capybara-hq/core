@@ -430,6 +430,32 @@ describe("the idle compaction job", () => {
     expect(await idleRuns(conv)).toEqual([]);
   });
 
+  it("is gone when the run's start under the lock refuses a conversation deleted after the checks", async () => {
+    const { conv, data } = await arm();
+    const queue = k.app.get(RunQueue);
+    const job = new IdleCompactionJob(
+      k.app.get(KernelDb),
+      k.app.get(CompactionSettingsService),
+      k.app.get(AccountsService),
+      k.app.get(ProviderRegistry),
+      k.app.get(CompactionService),
+      {
+        // the conversation is deleted between the job's checks and the run's start
+        startIdleCompaction: async (conversationId, armedSeq) => {
+          await db
+            .updateTable("conversations")
+            .set({ deleted_at: new Date() })
+            .where("id", "=", conversationId)
+            .execute();
+          return queue.startIdleCompaction(conversationId, armedSeq);
+        },
+      },
+      { info: () => {}, warn: () => {} },
+    );
+    expect(await withOrgScope(data.orgId, () => job.fire(data))).toBe("gone");
+    expect(await idleRuns(conv)).toEqual([]);
+  });
+
   it("is no_model after the agent's version changes the model (no event in the conversation)", async () => {
     const { agentId, conv, data } = await arm();
     await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)

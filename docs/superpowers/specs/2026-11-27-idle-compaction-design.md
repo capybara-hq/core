@@ -330,10 +330,12 @@ run.**
   null, reason: "superseded" }`, no partial summary; the run's finish then calls `ensureRun`, which
   starts the message's run. A queued, not yet claimed idle run (lock free) is ended as aborted
   inside `ensureRunIn`, which then creates the message's run in the same transaction.
-- A superseded abort pauses nothing: `RunFinish.finishIn` pauses the conversation queue for every
-  non-`completed` status and holds the tree for a person's stop, so it skips `pauseQueueIn` for a
-  `run_aborted` whose reason is `superseded` (it has no account, so `personStopped` is already
-  false: no tree hold). Otherwise the queued message that preempted the idle run would stay paused.
+- An idle compact run never pauses the queue: `RunFinish.finishIn` pauses the conversation queue
+  for every non-`completed` status, so it skips `pauseQueueIn` for any end of a run with
+  `compact_origin = 'idle'` (a superseded abort has no account, so `personStopped` is already
+  false: no tree hold). Otherwise the queued message that preempted the idle run would stay paused,
+  and a failed or stopped idle run, whose end the timeline does not show, would pause the queue
+  with no visible cause.
 - The message's run compacts inline if it needs to (it would have anyway; the cache is still warm,
   so its in-context summary is cheap too). The summary call already made is billed and recorded.
 - If the abort arrives after the `compaction_summary` was written (the `writing` phase), the summary
@@ -360,7 +362,9 @@ tier). The derivation (`t0`, `L`, refresh rules) is §9.3.
   goes back to another replica, which re-runs the compaction if the cache is still warm; the
   summary's idempotency keys are the run id and ordinal, compaction spec §4.4).
 - A failed compaction writes `compaction_failed` and the run finishes `completed`, exactly as a
-  manual one; check 6 blocks idle attempts until a summary succeeds.
+  manual one; check 6 blocks idle attempts until a summary succeeds. A refusal by
+  `startIdleCompaction` under the row lock is logged by the first check it now fails: `gone`
+  (re-read), else `obsolete`, else `busy`.
 - Org deletion: the outbox row goes with the org; a run already started is aborted by the existing
   org-deletion path (`org_deleted`).
 
@@ -495,6 +499,14 @@ No per-conversation switch (decision Q4).
     like an automatic one, and its stop (superseded or a person's) shows nothing. Only its summary
     draws the idle divider.
   - The divider's menu (or a short help link) says where to turn it off: the account preference.
+- **Out of the page, too.** An idle compact run's `run_finished` pushes no "replied" notification
+  (`push/recipients.ts` skips `compact_origin = 'idle'` as it skips automation runs; a manual
+  compaction keeps its push). It keeps the stored prompt suggestion fresh (`isFresh` ignores idle
+  compact runs for "latest run" and "no `run_started` after `afterSeq`": the summary is
+  display-only for the person and answers nothing). The conversation list stays still: the event
+  append leaves `conversations.updated_at` alone for a batch of one idle compact run's events
+  (decided in the same `UPDATE`, a primary key probe on `runs`, no extra round trip), and the
+  list's activity skips idle compact runs, so the conversation neither moves up nor shows running.
 - **Channels.** Nothing: compact runs already send no progress, and the divider is a web element.
 - Wording rules: zh says 智能体 / 平台, never 企业 or `agent` (`pnpm check:i18n`).
 

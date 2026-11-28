@@ -182,11 +182,13 @@ async function resolveConversation(
       if (event.run_id === null) return null;
       const run = await db
         .selectFrom("runs")
-        .select("automation_run_id")
+        .select(["automation_run_id", "compact_origin"])
         .where("id", "=", event.run_id)
         .where("conversation_id", "=", conversationId)
         .executeTakeFirst();
-      if (!run || run.automation_run_id !== null) return null;
+      // an automation's run is pushed by the automation; an idle compaction ran after the person
+      // left and answered nobody (idle compaction spec §6): neither pushes a reply
+      if (!run || run.automation_run_id !== null || run.compact_origin === "idle") return null;
       candidates = [owner];
       break;
     }

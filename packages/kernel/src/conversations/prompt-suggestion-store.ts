@@ -116,7 +116,9 @@ export class PromptSuggestionStore {
   /**
    * The freshness rule (spec §4), read from PG with plain queries (no lock): `runId` is the
    * conversation's latest run and it is terminal, the log has no `user_message` and no
-   * `run_started` with a seq above `afterSeq`, and the conversation's message queue is empty.
+   * `run_started` with a seq above `afterSeq`, and the conversation's message queue is empty. An
+   * idle compact run (idle compaction spec §6) counts for neither: it ran while the person was
+   * away, answered nothing and changed no message, so the suggestion they come back to stands.
    */
   async isFresh(
     conversationId: string,
@@ -127,6 +129,7 @@ export class PromptSuggestionStore {
       .selectFrom("runs")
       .select(["id", "status"])
       .where("conversation_id", "=", conversationId)
+      .where((eb) => eb.or([eb("compact_origin", "is", null), eb("compact_origin", "!=", "idle")]))
       .orderBy("created_at", "desc")
       .orderBy("id", "desc")
       .limit(1)
@@ -139,6 +142,7 @@ export class PromptSuggestionStore {
       .where("conversation_id", "=", conversationId)
       .where("seq", ">", String(s.afterSeq))
       .where("type", "in", ["user_message", "run_started"])
+      .where(sql<boolean>`payload->>'compactOrigin' IS DISTINCT FROM 'idle'`)
       .limit(1)
       .executeTakeFirst();
     if (newer !== undefined) return false;
