@@ -93,8 +93,11 @@ export function newReviewTag(): string {
 export interface ReviewClassifierInput {
   permissionCandidate?: PermissionCandidate;
   mode: "auto" | "sandbox";
-  /** The command for `Bash`, the path for a file write or a file read. */
-  kind: "command" | "write" | "read";
+  /**
+   * The command for `Bash`, the path for a file write or a file read, or a device service's
+   * request to reach a loopback port on the person's own device (`loopback`).
+   */
+  kind: "command" | "write" | "read" | "loopback-port";
   text: string;
   /** The directory the command runs in (the workspace for a file write). */
   cwd: string;
@@ -108,6 +111,11 @@ export interface ReviewClassifierInput {
    * escalation, or the escalation carries a credential consent. Absent otherwise.
    */
   fullAccessReview?: { subAgent?: true; credential?: true };
+  /**
+   * A loopback port request (`kind: "loopback-port"`): the device service, the port, the page it
+   * asked for (null when none was given) and whether the port is a well-known database port.
+   */
+  loopback?: { service: string; port: number; url: string | null; database: boolean };
 }
 
 /**
@@ -120,7 +128,9 @@ export function classifierMessage(input: ReviewClassifierInput): string {
       ? "File write path"
       : input.kind === "read"
         ? "File read path"
-        : "Command";
+        : input.kind === "loopback-port"
+          ? "Local port request"
+          : "Command";
   const rules =
     input.ruleHits.length === 0
       ? "(none)"
@@ -133,6 +143,11 @@ export function classifierMessage(input: ReviewClassifierInput): string {
     `<${input.tag}>`,
     input.text,
     `</${input.tag}>`,
+    ...(input.loopback
+      ? [
+          `Loopback port requested: the agent's browser asks to reach port ${input.loopback.port} on the person's own device (127.0.0.1, ::1 and localhost) for this conversation, for up to 24 hours.${input.loopback.database ? " This is a well-known local database port." : ""} Answer allow only when the person's messages make testing a local server in the browser part of the task; otherwise answer ask.`,
+        ]
+      : []),
     ...(input.permissionCandidate?.scopeKind === "sandbox-escalation"
       ? [
           `Sandbox escalation requested: the agent asks to run this one command outside the OS sandbox, with full access to the device's files and network for this call only.${escalationBackgroundText(input.permissionCandidate.escalation ?? {})} Answer allow only when the person's messages make running it outside the sandbox necessary and the command is everyday development work; otherwise answer ask.`,

@@ -36,9 +36,17 @@ export {
   reviewSystemPrompt,
   runClassifier,
 } from "./classifier.js";
-export type { CommandReview, ReviewCall, ReviewInput, ReviewVerdict } from "./review.service.js";
+export type {
+  CommandReview,
+  LoopbackPortReviewInput,
+  ReviewCall,
+  ReviewInput,
+  ReviewVerdict,
+} from "./review.service.js";
 export {
   CommandReviewService,
+  LOOPBACK_FULL_ACCESS_REASON,
+  loopbackAskReason,
   REVIEW_REASONS,
 } from "./review.service.js";
 export {

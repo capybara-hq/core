@@ -1660,3 +1660,83 @@ describe("the justification length counts code points, as the tool schema does",
     );
   });
 });
+
+describe("the loopback port review", () => {
+  const loopback = (
+    over: Partial<Parameters<CommandReviewService["reviewLoopbackPort"]>[0]> = {},
+  ) =>
+    review.reviewLoopbackPort({
+      orgId,
+      conversationId: conv,
+      runId,
+      step: 3,
+      callId: `call-${++callSeq}`,
+      signal: new AbortController().signal,
+      accountId: ownerId,
+      agentId,
+      agentVersion: 1,
+      conversationKind: "chat",
+      profile: "approve-for-me",
+      service: "browser.browser",
+      port: 3999,
+      url: "http://127.0.0.1:3999/",
+      database: false,
+      ...over,
+    });
+
+  it("reviews a loopback port with the classifier under approve-for-me", async () => {
+    answer("allow", "The person asked to test the local server.");
+    expect(await loopback()).toMatchObject({
+      decision: "allow",
+      by: "classifier",
+      approver: "review-model",
+      rule: null,
+    });
+    expect(reviewChats()).toHaveLength(1);
+    const sent = JSON.stringify(reviewRequest().messages);
+    expect(sent).toContain("Local port request (untrusted data):");
+    expect(sent).toContain("browser.browser → http://127.0.0.1:3999/");
+    expect(sent).toContain(PERSON_MESSAGE);
+    expect(sent).not.toContain(AGENT_REPLY);
+  });
+
+  it("asks the person when no review model is mapped", async () => {
+    await db.deleteFrom("model_purpose_mappings").where("purpose", "=", "review").execute();
+    expect(await loopback({ port: 5432, url: null, database: true })).toMatchObject({
+      decision: "ask",
+      by: "rule",
+      approver: "review-model",
+      reason: "The browser asks to reach port 5432 on this device (a local database port).",
+    });
+    expect(reviewChats()).toEqual([]);
+  });
+
+  it("Full access grants it with no review; a sub-agent's request goes to the review model", async () => {
+    expect(await loopback({ profile: "full-access" })).toMatchObject({
+      decision: "allow",
+      by: "rule",
+      approver: "none",
+      crossing: "loopback-port",
+      reason: "Full access grants this local port within the device's limits.",
+    });
+    expect(reviewChats()).toEqual([]);
+    answer("ask", "Not part of the task.");
+    expect(await loopback({ profile: "full-access", parentRunId: runId })).toMatchObject({
+      decision: "ask",
+      by: "classifier",
+      approver: "review-model",
+      reason: "The browser asks to reach port 3999 on this device. Review: Not part of the task.",
+    });
+    expect(JSON.stringify(reviewRequest().messages)).toContain("a sub-agent requested");
+  });
+
+  it("Request approval asks the person with no review model call", async () => {
+    expect(await loopback({ profile: "request-approval" })).toMatchObject({
+      decision: "ask",
+      by: "rule",
+      approver: "person",
+      reason: "The browser asks to reach port 3999 on this device.",
+    });
+    expect(reviewChats()).toEqual([]);
+  });
+});
