@@ -13,6 +13,12 @@ export interface CompactionSettings {
   reserveTokens: number;
   /** The summary call's output cap (1,024–32,000 tokens). */
   maxOutputTokens: number;
+  /** Compact an idle conversation from the prompt cache before the cache expires (idle compaction). */
+  idleEnabled: boolean;
+  /** The smallest context an idle compaction runs on, in tokens (50,000–2,000,000). */
+  idleMinTokensFloor: number;
+  /** The smallest context as a share of the model's window (0.1–0.9). */
+  idleMinWindowRatio: number;
 }
 
 /** A change to the compaction settings: only the fields given. */
@@ -25,6 +31,9 @@ export const COMPACTION_DEFAULTS: CompactionSettings = {
   keepRecentTurns: 4,
   reserveTokens: 8000,
   maxOutputTokens: 20_000,
+  idleEnabled: true,
+  idleMinTokensFloor: 200_000,
+  idleMinWindowRatio: 0.3,
 };
 
 /** The bounds of the kernel's compaction fields (a value outside them is a 400). */
@@ -33,6 +42,8 @@ export const COMPACTION_BOUNDS = {
   keepRecentTurns: { min: 0, max: 20, decimal: false },
   reserveTokens: { min: 0, max: 50_000, decimal: false },
   maxOutputTokens: { min: 1024, max: 32_000, decimal: false },
+  idleMinTokensFloor: { min: 50_000, max: 2_000_000, decimal: false },
+  idleMinWindowRatio: { min: 0.1, max: 0.9, decimal: true },
 } as const;
 
 /** The values an organization gets: its stored override over the platform's settings. */
@@ -46,5 +57,8 @@ export function effectiveCompaction(
     keepRecentTurns: override?.keepRecentTurns ?? platform.keepRecentTurns,
     reserveTokens: override?.reserveTokens ?? platform.reserveTokens,
     maxOutputTokens: override?.maxOutputTokens ?? platform.maxOutputTokens,
+    idleEnabled: override?.idleEnabled ?? platform.idleEnabled,
+    idleMinTokensFloor: override?.idleMinTokensFloor ?? platform.idleMinTokensFloor,
+    idleMinWindowRatio: override?.idleMinWindowRatio ?? platform.idleMinWindowRatio,
   };
 }
