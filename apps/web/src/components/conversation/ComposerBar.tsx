@@ -160,7 +160,7 @@ export const promptCommand = (p: Pick<ConnectorPrompt, "connectorSlug" | "name">
  * (`/` or `@`) stands in the text and where the query typed after it ends (the caret at the last
  * edit), or `at: null` for a menu opened without a trigger (+, or Skills over a draft with text),
  * whose query is `q` (the compact sheet's search field); and what an `@` menu lists: everything
- * (absent), the library's files only (`"files"`, ＋ → 文件库), the connector resources only
+ * (absent), the library's files only (`"files"`, + → File library), the connector resources only
  * (`"resources"`), or one connector's resources.
  */
 type MenuState = {
@@ -1006,7 +1006,7 @@ export function ComposerBar({
     ...unavailableGroup(prompts?.unavailable),
   ];
 
-  /** A library file's muted line: when it came and how ("研究助手 2026-11-20 生成"). */
+  /** A library file's muted line: when it came and how ("Research assistant, generated 2026-11-20"). */
   const fileDescription = (f: LibraryFileView): string => {
     const how = t(`composerMenu.fileOrigin.${f.origin}`, {
       date: formatDateTime(f.createdAt, "full", timeZone).slice(0, 10),
@@ -1016,7 +1016,7 @@ export function ComposerBar({
       : how;
   };
 
-  /** The `@` menu's files group: 最近文件 for the empty query, else 匹配的文件. */
+  /** The `@` menu's files group: Recent files for the empty query, else Matching files. */
   const filesGroup = (): ComposerMenuGroup[] => {
     const list = filesQ.data?.files ?? [];
     if (list.length === 0) return [];

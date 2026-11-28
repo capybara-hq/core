@@ -104,7 +104,7 @@ export const DEVICE_FIXTURE = {
 } as const;
 
 /**
- * The composer's project picker (spec §6.16.2 "Top strip"): the device's projects after 自由模式
+ * The composer's project picker (spec §6.16.2 "Top strip"): the device's projects after free mode
  * (no project), one name long enough to give way in a short strip.
  */
 export const PROJECT_FIXTURE = {

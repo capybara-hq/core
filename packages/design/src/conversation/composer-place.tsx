@@ -11,7 +11,7 @@ import { shortDeviceLabel } from "./composer-options";
 
 // The composer's top strip (spec §6.16.2 "Top strip", composer menus spec §6, §7): where the
 // conversation runs, the device then its project. From 600 up two pickers with a muted "/" between
-// them; below 600 one chip 「<device> / <project>」 opening a bottom sheet with a device group, then
+// them; below 600 one chip "<device> / <project>" opening a bottom sheet with a device group, then
 // that device's projects. CSS shows one of the two forms.
 
 /** The top strip's pickers: the device, then the project (absent when the device offers none). */
@@ -52,7 +52,7 @@ export function ComposerPlaceStrip({ device, project }: ComposerPlace): JSX.Elem
   );
 }
 
-/** The chip's two parts: the device (without a trailing 「设备」) and the project. */
+/** The chip's two parts: the device (without a trailing "device") and the project. */
 function ChipValue({ device, project }: ComposerPlace): JSX.Element {
   return (
     <>
@@ -74,7 +74,7 @@ function ChipValue({ device, project }: ComposerPlace): JSX.Element {
 }
 
 /**
- * The compact form (§6.16.2): one chip reading 「<device> / <project>」 that opens the place sheet.
+ * The compact form (§6.16.2): one chip reading "<device> / <project>" that opens the place sheet.
  * Picking a device keeps the sheet open (the project group follows it), picking a project closes it.
  */
 export function ComposerPlaceChip({

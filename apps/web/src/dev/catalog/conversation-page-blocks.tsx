@@ -630,7 +630,7 @@ function placeProps(locked: boolean): ComposerPlace {
   };
 }
 
-/** The composer with the top strip, the mode button after ＋ and the model · effort at the end. */
+/** The composer with the top strip, the mode button after + and the model · effort at the end. */
 function PlaceComposer({ locked, form }: { locked: boolean; form?: "medium" }) {
   const base = composerProps("idle");
   return (

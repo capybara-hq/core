@@ -199,7 +199,7 @@ describe("the control row with the top strip", () => {
       .filter((b) => b.getAttribute("data-part") !== "composer-options")
       .map((b) => b.getAttribute("aria-label"));
     expect(shown).toEqual(["权限: 帮我批准: 思考档位 高", "切换模型: opus 5.5 · 高"]);
-    // the frame's line: ＋ first (the text box), then the row, then the meter and send
+    // the frame's line: + first (the text box), then the row, then the meter and send
     const box = document.querySelector('[data-part="composer-box"]') as HTMLElement;
     const attach = within(box).getByRole("button", { name: "添加附件" });
     const meter = screen.getByRole("meter");

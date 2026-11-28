@@ -226,7 +226,7 @@ export type DeviceChoice = {
    */
   picker: PickerProps | undefined;
   /**
-   * The chosen device's project picker (project root §4.3, composer menus spec §6): 自由模式 and
+   * The chosen device's project picker (project root §4.3, composer menus spec §6): free mode and
    * the projects its current mode can read; undefined when the device offers none.
    */
   projectPicker?: PickerProps;
@@ -237,7 +237,7 @@ export type DeviceChoice = {
   create?: { onClose(): void };
 };
 
-/** A project item's id in the project picker; the bare prefix is 自由模式. */
+/** A project item's id in the project picker; the bare prefix is free mode. */
 const PROJECT_ITEM = "project:";
 
 /**
@@ -251,7 +251,7 @@ const PROJECT_ITEM = "project:";
  * first send then goes without a device.
  *
  * A second picker after it binds the conversation to a project (project root §4.3, composer menus
- * spec §6: the top strip reads device / project): 自由模式 (the default) and the chosen device's
+ * spec §6: the top strip reads device / project): free mode (the default) and the chosen device's
  * projects its current mode can read. A device without projects, or one that does not support
  * them, offers no project picker (while its projects are read the picker stands disabled on
  * free mode, with a loading notice); another device drops the pick.
@@ -383,7 +383,7 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
 
 /**
  * An existing conversation's device, read only (the top strip's `locked` picker): its name,
- * 设备已删除 when the bound device is gone, nothing for a conversation with none bound.
+ * "device deleted" when the bound device is gone, nothing for a conversation with none bound.
  */
 export function lockedDevicePicker(
   text: { label: string; hint: string; deleted: string },
@@ -403,7 +403,7 @@ export function lockedDevicePicker(
 
 /**
  * An existing conversation's project, read only (project root §4.3: shown, never changed here):
- * the top strip's locked project picker, nothing for a conversation in 自由模式.
+ * the top strip's locked project picker, nothing for a conversation in free mode.
  */
 export function lockedProjectPicker(
   text: { label: string; hint: string },

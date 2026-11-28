@@ -629,7 +629,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
     const send = `<button class="r-icon-btn r-send" aria-label="${esc(K.send)}" disabled>${icon("arrow-up", 16)}</button>`;
     const modeTitle = `${P.label}: ${P.description}`;
     if (o.form === "compact") {
-      // the touch form: the row above the pill, then the pill (＋, the text, send)
+      // the touch form: the row above the pill, then the pill (+, the text, send)
       const chip = locked
         ? `<span class="r-place-chip" data-part="composer-place-chip" data-locked title="${esc(`${device} / ${project}: ${K.deviceLocked}; ${K.projectLocked}`)}"><span class="r-place-value">${esc(device)}</span><span class="r-place-sep" aria-hidden="true">/</span><span class="r-place-value" data-project>${esc(project)}</span></span>`
         : `<button class="r-place-chip" data-part="composer-place-chip" aria-label="${esc(`${K.place}: ${device} / ${project}`)}"><span class="r-place-value">${esc(device)}</span><span class="r-place-sep" aria-hidden="true">/</span><span class="r-place-value" data-project>${esc(project)}</span>${icon("chevron-down", 12)}</button>`;

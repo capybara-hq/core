@@ -345,7 +345,7 @@ export type ComposerBoxProps = {
    * The top strip (§6.16.2 "Top strip"): where the conversation runs, the device then its project
    * (absent when the device offers none), above the attachments and the text; a `locked` picker is
    * static text (a conversation's). With it the control row draws no device picker
-   * (`pickers.device` is ignored), the mode button follows ＋ and the model picker stands at the
+   * (`pickers.device` is ignored), the mode button follows + and the model picker stands at the
    * end before the context meter and send; below 600 the strip is one chip opening a sheet, the
    * mode an icon button and the settings chip the model's name (model and effort only).
    */
@@ -796,7 +796,7 @@ export function ComposerBox({
       <div className="cb-composer-bar" data-part="composer-bar">
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
         {place ? (
-          // The top strip's layout: the mode follows ＋; below 600 the mode (an icon button) and
+          // The top strip's layout: the mode follows +; below 600 the mode (an icon button) and
           // the settings chip (the model and the effort) share the row above the pill (CSS).
           <span className="cb-composer-settings" data-part="composer-settings">
             {modeButton}

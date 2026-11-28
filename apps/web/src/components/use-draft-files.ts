@@ -36,7 +36,7 @@ export interface DraftFile {
   /** 原文件：失败后可用它重试（前端预检拦下的没有，不能重试）。 */
   file?: File;
   /**
-   * A file picked from the person's file library (`@` or 文件库): ready at once, no upload, and
+   * A file picked from the person's file library (`@` or File library): ready at once, no upload, and
    * never discarded on the kernel (it stays in the library when it leaves the draft).
    */
   library?: true;
