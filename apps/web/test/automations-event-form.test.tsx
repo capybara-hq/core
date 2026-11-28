@@ -164,51 +164,85 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** The new form with the trigger switched to events, a name and a prompt typed. */
-async function newEventForm(user: ReturnType<typeof userEvent.setup>) {
+type User = ReturnType<typeof userEvent.setup>;
+
+/**
+ * Every input event re-renders the whole automation form, and the cases are CPU-bound: two long
+ * flows (about 40 clicks and keystrokes each) took ten times as long under a full parallel run
+ * and passed the 5 s timeout. So each case checks one thing with few steps, user-event waits on no
+ * timer between its steps (`delay: null`; its default `0` sleeps before every pointer and key
+ * action), and values are pasted (one input event) instead of typed key by key, since typing is
+ * not what these cases test.
+ */
+const setupUser = () => userEvent.setup({ delay: null });
+
+/** Puts `text` into the empty text field `field` with one input event. */
+async function enter(user: User, field: HTMLElement, text: string) {
+  await user.click(field);
+  await user.paste(text);
+}
+
+/** The new form with the trigger switched to events, a name and a prompt entered. */
+async function newEventForm(user: User) {
   await renderRouteWithCache("/automations/new", lastStubRoutes());
-  await user.type(screen.getByRole("textbox", { name: E.form.name }), "Triage");
-  await user.type(screen.getByRole("textbox", { name: E.form.prompt }), "Triage the item.");
+  await enter(user, screen.getByRole("textbox", { name: E.form.name }), "Triage");
+  await enter(user, screen.getByRole("textbox", { name: E.form.prompt }), "Triage the item.");
   await user.click(screen.getByRole("radio", { name: E.form.kind.event }));
 }
 
+/** The new event form with the tracker source, the event types `types` checked and one filter row. */
+async function eventFormWithRow(user: User, types: string[]) {
+  await newEventForm(user);
+  await pickOption(screen.getByRole("combobox", { name: E.form.eventSource }), "Tracker", user);
+  for (const type of types) await user.click(screen.getByRole("checkbox", { name: type }));
+  await user.click(screen.getByRole("button", { name: E.form.addFilter }));
+}
+
 describe("/automations/new: an event trigger", () => {
+  it("a source and a type are needed; the directed type and the chat mode are not offered", async () => {
+    stubApi({ ...common, [`GET ${BASE}`]: ok({ items: [] }) });
+    const user = setupUser();
+    await newEventForm(user);
+    // the schedule's controls give way to the event ones
+    expect(screen.queryByRole("combobox", { name: E.form.preset })).toBeNull();
+    const create = screen.getByRole("button", { name: E.form.create });
+    expect(create).toHaveProperty("disabled", true);
+    await pickOption(screen.getByRole("combobox", { name: E.form.eventSource }), "Tracker", user);
+    expect(screen.getByRole("checkbox", { name: /Item created/ })).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: /Item assigned/ })).toBeNull();
+    expect(create).toHaveProperty("disabled", true);
+    await user.click(screen.getByRole("checkbox", { name: /Item created/ }));
+    expect(create).toHaveProperty("disabled", false);
+    // mode: the events' own choice, no chat
+    expect(screen.getByRole("radio", { name: new RegExp(`^${E.form.mode.subject}`) })).toBeTruthy();
+    expect(screen.queryByRole("radio", { name: new RegExp(`^${E.form.mode.chat}`) })).toBeNull();
+  });
+
+  it("a filter row offers the filterable facts of the selected types, never the unfilterable one", async () => {
+    stubApi({ ...common, [`GET ${BASE}`]: ok({ items: [] }) });
+    const user = setupUser();
+    await eventFormWithRow(user, ["Item created", "Item updated"]);
+    expect(
+      await optionLabels(screen.getByRole("combobox", { name: E.form.filterFact }), user),
+    ).toEqual(["Status", "Priority", "Done", "Labels"]);
+  });
+
   it("submits the event trigger, its filter, mode subject and unattendedAsk", async () => {
     const calls = stubApi({
       ...common,
       [`POST ${BASE}`]: () => json(201, { task: eventTask({ id: "e9" }) }),
       [`GET ${BASE}`]: ok({ items: [] }),
     });
-    const user = userEvent.setup();
-    await newEventForm(user);
-    // the schedule's controls give way to the event ones
-    expect(screen.queryByRole("combobox", { name: E.form.preset })).toBeNull();
-    const create = screen.getByRole("button", { name: E.form.create });
-    // a source and a type are needed
-    expect(create).toHaveProperty("disabled", true);
-    await pickOption(screen.getByRole("combobox", { name: E.form.eventSource }), "Tracker", user);
-    // the directed type is not offered
-    expect(screen.getByRole("checkbox", { name: /Item created/ })).toBeTruthy();
-    expect(screen.queryByRole("checkbox", { name: /Item assigned/ })).toBeNull();
-    expect(create).toHaveProperty("disabled", true);
-    await user.click(screen.getByRole("checkbox", { name: /Item created/ }));
-    await user.click(screen.getByRole("checkbox", { name: /Item updated/ }));
-    expect(create).toHaveProperty("disabled", false);
-    // a filter row: the filterable facts of both types, never the unfilterable one
-    await user.click(screen.getByRole("button", { name: E.form.addFilter }));
-    const fact = screen.getByRole("combobox", { name: E.form.filterFact });
-    expect(await optionLabels(fact, user)).toEqual(["Status", "Priority", "Done", "Labels"]);
-    await user.type(screen.getByRole("textbox", { name: E.form.filterValue }), "open");
-    // mode: the events' own choice, no chat
-    expect(screen.getByRole("radio", { name: new RegExp(`^${E.form.mode.subject}`) })).toBeTruthy();
-    expect(screen.queryByRole("radio", { name: new RegExp(`^${E.form.mode.chat}`) })).toBeNull();
+    const user = setupUser();
+    await eventFormWithRow(user, ["Item created", "Item updated"]);
+    await enter(user, screen.getByRole("textbox", { name: E.form.filterValue }), "open");
     await user.click(screen.getByRole("radio", { name: new RegExp(`^${E.form.mode.subject}`) }));
     await pickOption(
       screen.getByRole("combobox", { name: E.form.unattendedAsk }),
       E.form.ask.wait,
       user,
     );
-    await user.click(create);
+    await user.click(screen.getByRole("button", { name: E.form.create }));
     const body = bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE));
     expect(body).toEqual({
       agentId: "ag1",
@@ -232,7 +266,7 @@ describe("/automations/new: an event trigger", () => {
       [`POST ${BASE}`]: () => json(201, { task: eventTask({ id: "e9" }) }),
       [`GET ${BASE}`]: ok({ items: [] }),
     });
-    const user = userEvent.setup();
+    const user = setupUser();
     await newEventForm(user);
     await pickOption(screen.getByRole("combobox", { name: E.form.eventSource }), "Tracker", user);
     await user.click(screen.getByRole("checkbox", { name: /Item created/ }));
@@ -255,99 +289,95 @@ describe("/automations/new: an event trigger", () => {
     expect(body.model).toEqual({ provider: "model-fake", model: "fake-1" });
   });
 
-  it("each fact type has its operators and value; a list fact writes contains", async () => {
-    const calls = stubApi({
-      ...common,
-      [`POST ${BASE}`]: () => json(201, { task: eventTask({ id: "e9" }) }),
-      [`GET ${BASE}`]: ok({ items: [] }),
-    });
-    const user = userEvent.setup();
-    await newEventForm(user);
-    await pickOption(screen.getByRole("combobox", { name: E.form.eventSource }), "Tracker", user);
-    await user.click(screen.getByRole("checkbox", { name: /Item created/ }));
-    const add = () => user.click(screen.getByRole("button", { name: E.form.addFilter }));
-    const rows = () =>
-      screen.getAllByRole("combobox", { name: E.form.filterFact }).map((el) => {
-        const row = el.closest("[data-part='repeater-item']") ?? el.parentElement?.parentElement;
-        return row as HTMLElement;
+  describe("each fact type has its operators and value", () => {
+    /** Creates the automation with one filter row on `item.created` and returns the filter sent. */
+    async function filterSent(
+      fill: (user: User, row: HTMLElement) => Promise<void>,
+    ): Promise<unknown> {
+      const calls = stubApi({
+        ...common,
+        [`POST ${BASE}`]: () => json(201, { task: eventTask({ id: "e9" }) }),
+        [`GET ${BASE}`]: ok({ items: [] }),
       });
-    // a string fact: eq and in; in takes a comma list
-    await add();
-    await pickOption(
-      within(rows()[0] as HTMLElement).getByRole("combobox", { name: E.form.filterOp }),
-      E.form.op.in,
-      user,
-    );
-    await user.type(
-      within(rows()[0] as HTMLElement).getByRole("textbox", { name: E.form.filterValue }),
-      "open, new",
-    );
-    // a number fact: eq with a number
-    await add();
-    await pickOption(
-      within(rows()[1] as HTMLElement).getByRole("combobox", { name: E.form.filterFact }),
-      "Priority",
-      user,
-    );
-    expect(
-      await optionLabels(
-        within(rows()[1] as HTMLElement).getByRole("combobox", { name: E.form.filterOp }),
-        user,
-      ),
-    ).toEqual([E.form.op.eq]);
-    await user.type(
-      within(rows()[1] as HTMLElement).getByRole("textbox", { name: E.form.filterValue }),
-      "2",
-    );
-    // a boolean fact: a yes / no choice
-    await add();
-    await pickOption(
-      within(rows()[2] as HTMLElement).getByRole("combobox", { name: E.form.filterFact }),
-      "Done",
-      user,
-    );
-    await pickOption(
-      within(rows()[2] as HTMLElement).getByRole("combobox", { name: E.form.filterValue }),
-      E.form.no,
-      user,
-    );
-    // a list fact: contains only
-    await add();
-    await pickOption(
-      within(rows()[3] as HTMLElement).getByRole("combobox", { name: E.form.filterFact }),
-      "Labels",
-      user,
-    );
-    expect(
-      await optionLabels(
-        within(rows()[3] as HTMLElement).getByRole("combobox", { name: E.form.filterOp }),
-        user,
-      ),
-    ).toEqual([E.form.op.contains]);
-    await user.type(
-      within(rows()[3] as HTMLElement).getByRole("textbox", { name: E.form.filterValue }),
-      "bug",
-    );
-    await user.click(screen.getByRole("button", { name: E.form.create }));
-    const body = bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE)) as {
-      trigger: unknown;
-    };
-    expect(body.trigger).toEqual({
-      kind: "event",
-      source: "tracker",
-      types: ["item.created"],
-      filter: [
-        { fact: "status", op: "in", value: ["open", "new"] },
-        { fact: "priority", op: "eq", value: 2 },
-        { fact: "done", op: "eq", value: false },
-        { fact: "labels", op: "contains", value: "bug" },
-      ],
+      const user = setupUser();
+      await eventFormWithRow(user, ["Item created"]);
+      const fact = screen.getByRole("combobox", { name: E.form.filterFact });
+      const row = (fact.closest("[data-part='repeater-item']") ??
+        fact.parentElement?.parentElement) as HTMLElement;
+      await fill(user, row);
+      await user.click(screen.getByRole("button", { name: E.form.create }));
+      const body = bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE)) as {
+        trigger: { filter: unknown };
+      };
+      return body.trigger.filter;
+    }
+
+    it("a string fact: in takes a comma list", async () => {
+      const filter = await filterSent(async (user, row) => {
+        await pickOption(
+          within(row).getByRole("combobox", { name: E.form.filterOp }),
+          E.form.op.in,
+          user,
+        );
+        await enter(
+          user,
+          within(row).getByRole("textbox", { name: E.form.filterValue }),
+          "open, new",
+        );
+      });
+      expect(filter).toEqual([{ fact: "status", op: "in", value: ["open", "new"] }]);
+    });
+
+    it("a number fact: eq with a number", async () => {
+      const filter = await filterSent(async (user, row) => {
+        await pickOption(
+          within(row).getByRole("combobox", { name: E.form.filterFact }),
+          "Priority",
+          user,
+        );
+        expect(
+          await optionLabels(within(row).getByRole("combobox", { name: E.form.filterOp }), user),
+        ).toEqual([E.form.op.eq]);
+        await enter(user, within(row).getByRole("textbox", { name: E.form.filterValue }), "2");
+      });
+      expect(filter).toEqual([{ fact: "priority", op: "eq", value: 2 }]);
+    });
+
+    it("a boolean fact: a yes / no choice", async () => {
+      const filter = await filterSent(async (user, row) => {
+        await pickOption(
+          within(row).getByRole("combobox", { name: E.form.filterFact }),
+          "Done",
+          user,
+        );
+        await pickOption(
+          within(row).getByRole("combobox", { name: E.form.filterValue }),
+          E.form.no,
+          user,
+        );
+      });
+      expect(filter).toEqual([{ fact: "done", op: "eq", value: false }]);
+    });
+
+    it("a list fact: contains only", async () => {
+      const filter = await filterSent(async (user, row) => {
+        await pickOption(
+          within(row).getByRole("combobox", { name: E.form.filterFact }),
+          "Labels",
+          user,
+        );
+        expect(
+          await optionLabels(within(row).getByRole("combobox", { name: E.form.filterOp }), user),
+        ).toEqual([E.form.op.contains]);
+        await enter(user, within(row).getByRole("textbox", { name: E.form.filterValue }), "bug");
+      });
+      expect(filter).toEqual([{ fact: "labels", op: "contains", value: "bug" }]);
     });
   });
 
   it("a row with an empty or mistyped value blocks the create; unchecking a type drops the rows that lose their fact", async () => {
     stubApi({ ...common, [`GET ${BASE}`]: ok({ items: [] }) });
-    const user = userEvent.setup();
+    const user = setupUser();
     await newEventForm(user);
     await pickOption(screen.getByRole("combobox", { name: E.form.eventSource }), "Tracker", user);
     await user.click(screen.getByRole("checkbox", { name: /Item created/ }));
@@ -361,7 +391,7 @@ describe("/automations/new: an event trigger", () => {
     ).toEqual(["Status"]);
     // an empty value is no clause: the create waits
     expect(create).toHaveProperty("disabled", true);
-    await user.type(screen.getByRole("textbox", { name: E.form.filterValue }), "open");
+    await enter(user, screen.getByRole("textbox", { name: E.form.filterValue }), "open");
     expect(create).toHaveProperty("disabled", false);
     // dropping `item.closed` keeps `status`; the row stays
     await user.click(screen.getByRole("checkbox", { name: /Item closed/ }));
@@ -373,7 +403,7 @@ describe("/automations/new: an event trigger", () => {
 
   it("switching the trigger keeps the modes apart: a schedule offers chat, never subject", async () => {
     stubApi({ ...common, [`GET ${BASE}`]: ok({ items: [] }) });
-    const user = userEvent.setup();
+    const user = setupUser();
     await renderRouteWithCache("/automations/new", lastStubRoutes());
     const mode = (m: string) => new RegExp(`^${m}`);
     expect(screen.queryByRole("radio", { name: mode(E.form.mode.subject) })).toBeNull();
@@ -396,7 +426,7 @@ describe("/automations/new: an event trigger", () => {
       [`GET ${BASE}/event-sources`]: ok({ items: [] }),
       [`GET ${BASE}`]: ok({ items: [] }),
     });
-    const user = userEvent.setup();
+    const user = setupUser();
     await newEventForm(user);
     expect(await screen.findByText(E.form.noEventSources)).toBeTruthy();
     expect(screen.getByRole("button", { name: E.form.create })).toHaveProperty("disabled", true);
@@ -405,7 +435,7 @@ describe("/automations/new: an event trigger", () => {
   it("zh: 定时 / 事件 and the item mode", async () => {
     stubApi({ ...common, [`GET ${BASE}`]: ok({ items: [] }) });
     await renderRouteWithCache("/automations/new", lastStubRoutes(), { locale: "zh" });
-    const user = userEvent.setup();
+    const user = setupUser();
     await user.click(screen.getByRole("radio", { name: Z.form.kind.event }));
     expect(Z.form.kind.time).toBe("定时");
     expect(Z.form.kind.event).toBe("事件");
@@ -433,7 +463,7 @@ describe("/automations/[id]: an event automation", () => {
         json(200, { task: eventTask(bodyOf(c) as Record<string, unknown>) }),
     });
     await renderRouteWithCache("/automations/e1", lastStubRoutes());
-    const user = userEvent.setup();
+    const user = setupUser();
     expect(screen.getByRole("radio", { name: E.form.kind.event })).toHaveProperty("checked", true);
     // the sources load once the form shows an event trigger
     expect(await screen.findByRole("checkbox", { name: /Item created/ })).toHaveProperty(
@@ -475,7 +505,7 @@ describe("/automations/[id]: an event automation", () => {
         json(200, { task: eventTask(bodyOf(c) as Record<string, unknown>) }),
     });
     await renderRouteWithCache("/automations/e1", lastStubRoutes());
-    const user = userEvent.setup();
+    const user = setupUser();
     await pickOption(
       screen.getByRole("combobox", { name: E.form.unattendedAsk }),
       E.form.orgDefault,
@@ -492,7 +522,7 @@ describe("/automations/[id]: an event automation", () => {
         json(200, { task: eventTask(bodyOf(c) as Record<string, unknown>) }),
     });
     await renderRouteWithCache("/automations/e1", lastStubRoutes());
-    const user = userEvent.setup();
+    const user = setupUser();
     await user.click(screen.getByRole("radio", { name: E.form.kind.time }));
     await user.click(within(actionRow() as HTMLElement).getByRole("button", { name: E.form.save }));
     const patch = bodyOf(calls.find((c) => c.method === "PATCH")) as Record<string, unknown>;
@@ -551,10 +581,10 @@ describe("/settings/automations: event automations", () => {
     const tracker = screen.getByRole("checkbox", { name: "Tracker" });
     expect(tracker).toHaveProperty("checked", true);
     expect(screen.getByRole("checkbox", { name: "old-source" })).toHaveProperty("checked", false);
-    const user = userEvent.setup();
+    const user = setupUser();
     const depth = screen.getByRole("textbox", { name: S.maxEventDepth });
     await user.clear(depth);
-    await user.type(depth, "4");
+    await enter(user, depth, "4");
     await user.click(tracker);
     await user.click(screen.getByRole("checkbox", { name: "old-source" }));
     await user.click(within(actionRow() as HTMLElement).getByRole("button", { name: S.save }));
@@ -566,10 +596,10 @@ describe("/settings/automations: event automations", () => {
   it("a chain depth past the kernel's bound blocks the save", async () => {
     stubApi(routes);
     await renderRouteWithCache("/settings/automations", lastStubRoutes());
-    const user = userEvent.setup();
+    const user = setupUser();
     const depth = screen.getByRole("textbox", { name: S.maxEventDepth });
     await user.clear(depth);
-    await user.type(depth, "1001");
+    await enter(user, depth, "1001");
     expect(screen.getByText(S.invalid)).toBeTruthy();
     expect(within(actionRow() as HTMLElement).getByRole("button", { name: S.save })).toHaveProperty(
       "disabled",
