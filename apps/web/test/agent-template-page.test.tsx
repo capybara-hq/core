@@ -155,7 +155,7 @@ describe("/agents/templates/[id]: read view and editor (rulings P4-12, P4-14)", 
     expect(screen.getByRole("button", { name: A.create })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
     // the path goes back to the 模板 tab
-    expect(screen.getByRole("link", { name: "templates" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: en.path.org.templates }).getAttribute("href")).toBe(
       "/agents?tab=templates",
     );
     // read-only: no form field

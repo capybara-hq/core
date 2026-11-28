@@ -1,4 +1,6 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -300,6 +302,20 @@ describe("EmbedFrame", () => {
     });
     expect(onMessage).toHaveBeenCalledTimes(1);
     expect(onMessage.mock.calls[0]?.[0].data).toBe("mine");
+  });
+  it("stays hidden until its first load, so no light blank document flashes in a dark theme", () => {
+    wrap(<EmbedFrame src="about:blank" title="f" onMessage={() => {}} />);
+    const frame = screen.getByTitle("f");
+    expect(frame.hasAttribute("data-loaded")).toBe(false);
+    fireEvent.load(frame);
+    expect(frame.getAttribute("data-loaded")).toBe("true");
+    // the stylesheet: hidden until loaded, and the normal scheme, never the dark theme's inherited
+    // `dark` (a scheme other than the document's makes the browser paint an opaque canvas)
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/display.css"), "utf8");
+    const rule = (sel: string) =>
+      new RegExp(`\\n${sel.replace(/[.()[\]]/g, "\\$&")} \\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+    expect(rule(".cb-embed")).toContain("color-scheme: normal;");
+    expect(rule(".cb-embed:not([data-loaded])")).toContain("visibility: hidden;");
   });
   it("卸载时移除同一个 message 监听", () => {
     const add = vi.spyOn(window, "addEventListener");

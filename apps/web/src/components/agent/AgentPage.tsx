@@ -18,7 +18,7 @@ import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { ReassignOwnerDialog } from "../ReassignOwnerDialog";
 import { SaveAsTemplateDialog } from "../SaveAsTemplateDialog";
 import { navLevelOf } from "../shell/nav";
-import { usePagePath } from "../shell/path";
+import { usePagePath, usePathWord } from "../shell/path";
 import { useSession } from "../shell/session";
 import { AttributionSection } from "./AttributionSection";
 import { BasicsSection } from "./BasicsSection";
@@ -80,6 +80,7 @@ export function AgentPage({
   editable: boolean;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations();
   const router = useRouter();
   const { me } = useSession();
@@ -129,7 +130,7 @@ export function AgentPage({
   const name = agent.definition.name || t("agents.form.editTitle");
   const description = agent.profile.description;
   const header: PageHeaderProps = {
-    path: [...scope, { label: "agents", href: "/agents" }, { label: name }],
+    path: [...scope, pw("agents", "/agents"), { label: name }],
     title: name,
     ...(description !== "" ? { description } : {}),
     avatar: <Avatar value={avatarValue(agent, orgId)} name={name} size={40} />,

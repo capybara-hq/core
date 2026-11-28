@@ -13,7 +13,7 @@ import {
 } from "../../../../components/agent/sections";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { myRole, roleAtLeast } from "../../../../lib/members";
 import { canEditAgent, canUpdateOrg } from "../../../../lib/org-settings";
@@ -78,6 +78,7 @@ function AgentPageLoading({
   section: string | undefined;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("agents.page");
   const ta = useTranslations("agents");
   const tc = useTranslations("common");
@@ -96,7 +97,7 @@ function AgentPageLoading({
   return (
     <SettingsPage
       header={{
-        path: [...scope, { label: "agents", href: "/agents" }],
+        path: [...scope, pw("agents", "/agents")],
         title: "",
         // the loaded head carries the agent's avatar: keep its 40 px slot
         loading: { title: true, avatar: true },

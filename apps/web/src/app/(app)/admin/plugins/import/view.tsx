@@ -31,7 +31,7 @@ import { ScopeFields } from "../../../../../components/PluginScopeDialog";
 import { fromReview } from "../../../../../components/plugin-contents/from-review";
 import { PluginContents } from "../../../../../components/plugin-contents/PluginContents";
 import { withUpdateMarks } from "../../../../../components/plugin-contents/update-marks";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { useAdminThemeName } from "../../../../../components/ThemeImpact";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import { ApiClientError, type ApiErrorDetail, issueLines } from "../../../../../lib/api";
@@ -139,6 +139,7 @@ export default function PluginImportView({ staging }: { staging: string | null }
 
 function StagedImportRead({ staging, orgId }: { staging: string; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("catalog.admin.review");
   const tw = useTranslations("admin.extensions.wizard");
   const o = stagedImportQuery(staging);
@@ -160,7 +161,7 @@ function StagedImportRead({ staging, orgId }: { staging: string; orgId: string |
   return (
     <WizardPage
       header={{
-        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
+        path: [...scope, pw("plugins", "/admin/plugins"), pw("import")],
         title: t("title"),
       }}
       // Install and update have the same two steps
@@ -189,6 +190,7 @@ function StagedImportRead({ staging, orgId }: { staging: string; orgId: string |
 
 function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("catalog.admin.review");
   const tw = useTranslations("admin.extensions.wizard");
   const router = useRouter();
@@ -572,7 +574,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   return (
     <WizardPage
       header={{
-        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
+        path: [...scope, pw("plugins", "/admin/plugins"), pw("import")],
         title: shownUpdating ? tu("pageTitle", { name: installedName }) : t("title"),
       }}
       steps={[t("steps.source"), t("steps.reviewConfirm")]}

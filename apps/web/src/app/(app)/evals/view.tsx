@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { evalsTabs } from "../../../lib/evals-tabs";
 import { agentsQuery } from "../../../lib/query/agents";
 import { retryOnMountOf } from "../../../lib/query/client";
@@ -30,6 +30,7 @@ export default function EvalSetsView() {
 function EvalSets({ orgId }: { orgId: string }) {
   const timeZone = useTimeZone();
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("evals");
   const list = usePageQuery(evalSetsQuery(orgId));
   const agentsQ = agentsQuery(orgId);
@@ -41,7 +42,7 @@ function EvalSets({ orgId }: { orgId: string }) {
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
   const header = {
-    path: [...scope, { label: "evals" }],
+    path: [...scope, pw("evals")],
     title: t("title"),
     actions: [{ label: t("new"), variant: "primary" as const, href: "/evals/new" }],
     tabs: evalsTabs(t, list.kind === "ready" ? { sets: sets.length } : {}),

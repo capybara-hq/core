@@ -11,7 +11,7 @@ import { useMemberGuides } from "../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { componentDescription, componentLabel, type OrgComponent } from "../../../lib/components";
 import {
   type ConnectorDetail,
@@ -60,6 +60,7 @@ const roleOf = (me: Me) => me.memberships.find((m) => m.orgId === me.currentOrgI
 
 function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("connectors");
   const tc = useTranslations("orgComponents");
   const tn = useTranslations("connections");
@@ -107,7 +108,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const active = tab === "disabled" && disabled.length > 0 ? "disabled" : "all";
   const rows = active === "disabled" ? disabled : all;
   const header = {
-    path: [...scope, { label: "connectors" }],
+    path: [...scope, pw("connectors")],
     title: t("title"),
     actions: [
       ...(manage

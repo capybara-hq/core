@@ -197,26 +197,26 @@ describe("(app) 页面模板", () => {
     resetNavigation("/trajectories/9f60c1e6-1111-4222-8333-444455556666");
     renderPage(<NotFound />, { locale: "zh" });
     const nav = screen.getByRole("navigation", { name: "路径" });
-    expect(nav.textContent).toBe("acme/trajectories/9f60c1e6");
+    expect(nav.textContent).toBe(`acme/${zh.path.org.trajectories}/9f60c1e6`);
     // the org scope links home (the new conversation; there is no home page)
     expect(within(nav).getByRole("link", { name: "acme" }).getAttribute("href")).toBe("/");
-    expect(within(nav).getByRole("link", { name: "trajectories" }).getAttribute("href")).toBe(
-      "/trajectories",
-    );
+    expect(
+      within(nav).getByRole("link", { name: zh.path.org.trajectories }).getAttribute("href"),
+    ).toBe("/trajectories");
   });
 
-  it("the error page keeps the page's path in the head; under /admin it starts with /admin", () => {
+  it("the error page keeps the page's path in the head; under /admin it starts with 管理后台", () => {
     // (a path of three segments: one or two draw no path row, layered shell spec §3)
     resetNavigation("/trajectories/c1");
     const { unmount } = renderPage(<ErrorFrame reset={() => {}} />, { locale: "zh" });
     expect(screen.getByRole("navigation", { name: "路径" }).textContent).toBe(
-      "acme/trajectories/c1",
+      `acme/${zh.path.org.trajectories}/c1`,
     );
     unmount();
     resetNavigation("/admin/plugins/market");
     renderPage(<ErrorFrame reset={() => {}} />, { locale: "zh" });
     expect(screen.getByRole("navigation", { name: "路径" }).textContent).toBe(
-      "/admin/plugins/market",
+      `${zh.path.admin.root}/${zh.path.admin.plugins}/${zh.path.admin.market}`,
     );
   });
 });

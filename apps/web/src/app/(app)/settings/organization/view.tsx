@@ -24,7 +24,7 @@ import { OrgNetworkSection } from "../../../../components/OrgNetworkAllowances";
 import { CompactionSection } from "../../../../components/settings/CompactionSection";
 import { PromptCacheSection } from "../../../../components/settings/PromptCacheSection";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { timeZoneOptions } from "../../../../lib/account-preferences";
 import { navigateBrowser } from "../../../../lib/browser";
@@ -82,6 +82,7 @@ type OrgDraft = Pick<
 
 function OrganizationSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("orgSettings");
   const tc = useTranslations("common");
   const tcp = useTranslations("compaction");
@@ -107,11 +108,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
       })),
   });
   const header = {
-    path: [
-      ...scope,
-      { label: "settings", href: "/settings/organization" },
-      { label: "organization" },
-    ],
+    path: [...scope, pw("settings", "/settings/organization"), pw("organization")],
     title: t("title"),
   };
   if (read.kind === "notFound") return <NotFound />;

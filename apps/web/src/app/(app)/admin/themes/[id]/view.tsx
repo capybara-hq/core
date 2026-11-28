@@ -15,7 +15,7 @@ import {
 } from "../../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import {
   componentDescription,
   componentName,
@@ -46,6 +46,7 @@ export default function AdminThemeView({ id }: { id: string }) {
 
 function AdminThemeRead({ id, orgId }: { id: string; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents.detail");
   const list = usePageQuery(adminComponentsQuery("theme"));
   if (list.kind === "notFound") return <NotFound />;
@@ -54,7 +55,7 @@ function AdminThemeRead({ id, orgId }: { id: string; orgId: string | null }) {
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "themes", href: "/admin/themes" }, { label: id }],
+          path: [...scope, pw("themes", "/admin/themes"), { label: id }],
           title: "",
         }}
         tabs={{
@@ -74,6 +75,7 @@ function AdminThemeRead({ id, orgId }: { id: string; orgId: string | null }) {
 
 function AdminTheme({ c, orgId }: { c: PlatformComponent; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents.detail");
   const [tab, setTab] = useState<Tab>("versions");
   const vq = componentVersionsQuery("theme", c.id);
@@ -90,7 +92,7 @@ function AdminTheme({ c, orgId }: { c: PlatformComponent; orgId: string | null }
     <>
       <DetailPage
         header={{
-          path: [...scope, { label: "themes", href: "/admin/themes" }, { label: name }],
+          path: [...scope, pw("themes", "/admin/themes"), { label: name }],
           title: name,
           count: versionLabel(c.version),
           status: <StateBadges c={c} platformDefault={isDefault} />,
