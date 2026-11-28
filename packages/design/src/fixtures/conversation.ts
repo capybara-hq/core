@@ -2029,3 +2029,28 @@ export const COMPOSER_EDITOR_FIXTURE: {
   },
   hint: "[issue-number]",
 };
+
+/**
+ * A sent message with inline tokens (composer inline tokens spec §1, user bubble): text with
+ * tokens mid-sentence, and a skill invocation whose arguments hold a token.
+ */
+export const BUBBLE_TOKENS_FIXTURE: {
+  text: (string | FixtureInlineToken)[];
+  skill: { label: string; arguments: (string | FixtureInlineToken)[] };
+} = {
+  text: [
+    "把 ",
+    COMPOSER_EDITOR_FIXTURE.tokens.file,
+    " 的结论发给 ",
+    COMPOSER_EDITOR_FIXTURE.tokens.slack,
+    " 里的 ",
+    COMPOSER_EDITOR_FIXTURE.tokens.resource,
+    "，再看看 ",
+    COMPOSER_EDITOR_FIXTURE.tokens.projectFile,
+    " 有没有要改的",
+  ],
+  skill: {
+    label: "/fix-issue",
+    arguments: [COMPOSER_EDITOR_FIXTURE.tokens.conversation, " 123"],
+  },
+};

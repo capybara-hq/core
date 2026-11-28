@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BubbleAttachments,
   bubbleLooksLong,
+  type ComposerSegment,
   DesignProvider,
   Prose,
   RunDivider,
@@ -105,6 +106,42 @@ describe("UserBubble (§6.16.6)", () => {
     cleanup();
     const withSkill = render(<UserBubble text="" skill="/fix-issue" />);
     expect(withSkill.container.querySelector('[data-part="bubble"]')).not.toBeNull();
+  });
+
+  const slackToken = { kind: "connector", id: "c-slack", label: "Slack" } as const;
+  const fileToken = { kind: "file", id: "f1", label: "a.pdf", icon: { fileType: "PDF" } } as const;
+
+  it("bubble draws tokens inline", () => {
+    const segments: ComposerSegment[] = ["send to ", slackToken, " now"];
+    const { container } = wrap(<UserBubble text="" segments={segments} />);
+    const body = container.querySelector('[data-part="bubble-body"]') as Element;
+    const token = body.querySelector('[data-part="inline-token"]') as HTMLElement;
+    // inside the body's own flow, between the two text runs, read-only
+    expect(token.parentElement).toBe(body);
+    expect(token.previousSibling?.textContent).toBe("send to ");
+    expect(token.nextSibling?.textContent).toBe(" now");
+    expect(token.dataset.selected).toBeUndefined();
+    expect(token.getAttribute("role")).toBe("img");
+    expect(container.querySelector('[data-part="bubble"]')).not.toBeNull();
+  });
+
+  it("skill chip precedes argument tokens", () => {
+    const { container } = wrap(
+      <UserBubble text="" skill="/fix-issue" segments={[slackToken, " 123"]} />,
+    );
+    const body = container.querySelector('[data-part="bubble-body"]') as Element;
+    expect(body.firstElementChild?.getAttribute("data-part")).toBe("bubble-skill");
+    expect(body.children[1]?.getAttribute("data-part")).toBe("inline-token");
+  });
+
+  it("token names read in line order", () => {
+    const { container } = wrap(
+      <UserBubble text="" segments={["a ", slackToken, " b ", fileToken]} />,
+    );
+    const names = [...container.querySelectorAll('[data-part="inline-token"]')].map((n) =>
+      n.getAttribute("aria-label"),
+    );
+    expect(names).toEqual(["连接器：Slack", "文件：a.pdf"]);
   });
 
   it("skill: the chip before the arguments in the bubble, details under it", () => {

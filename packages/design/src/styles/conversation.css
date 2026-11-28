@@ -406,6 +406,18 @@ button.cb-tool-line:focus-visible {
   -webkit-mask-image: linear-gradient(black calc(100% - var(--cb-type-prose-line)), transparent);
   mask-image: linear-gradient(black calc(100% - var(--cb-type-prose-line)), transparent);
 }
+/* A token inside the bubble (composer inline tokens spec §1): read-only, so no outline. The bubble
+ * itself is `selected`, so a reference token takes `raised`; the skill token keeps its tint. */
+.cb-bubble .cb-inline-token {
+  background: var(--cb-raised);
+  cursor: inherit;
+}
+.cb-bubble .cb-inline-token[data-kind="skill"] {
+  background: var(--cb-accent-tint);
+}
+.cb-bubble .cb-inline-token[data-state="refused"] {
+  background: transparent;
+}
 .cb-bubble-more {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
