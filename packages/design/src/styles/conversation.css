@@ -2696,6 +2696,14 @@ button.cb-file-card:focus-visible {
   height: 15px;
   max-width: 24px;
 }
+/* The caption sits 1px lower than a tool row's text. Both lines centre their line box on the row,
+   but the font's CJK glyphs sit high in it (the ink of 规划中… centres 1.25px above the row's
+   centre, Latin text with descenders 0.75px below), which reads as too high beside the capybara's
+   flat body; 1px puts the ink on the mark's centre. Relative offset: the row height stays. */
+.cb-rail-planning .cb-working-caption {
+  position: relative;
+  top: 1px;
+}
 .cb-rail-dot {
   width: 5px;
   height: 5px;

@@ -257,6 +257,9 @@ describe("ProcessBlock rail", () => {
     // a theme's mark: the same box, its aspect kept
     const img = of(".cb-rail-planning > .cb-rail-gutter > .cb-working-mark-img");
     expect([img.width, img.height, img["max-width"]]).toEqual(["auto", "15px", "24px"]);
+    // the caption sits 1px lower (the font's CJK ink rides high), the row height unchanged
+    const caption = of(".cb-rail-planning .cb-working-caption");
+    expect([caption.position, caption.top]).toEqual(["relative", "1px"]);
     // the standalone working line keeps its 28 × 20 capybara
     expect(of(".cb-working-mark").height).toBe("var(--cb-space-5)");
   });
