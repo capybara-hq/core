@@ -119,15 +119,16 @@ export class IdleReturn {
     if (now - finishedAt <= IDLE_RETURN_GAP_MS) return;
 
     // the previous run's last step usage (a side call's usage carries a `purpose`)
-    const usages = await t
+    const usageRow = await t
       .selectFrom("conversation_events")
       .select("payload")
       .where("conversation_id", "=", conv.id)
       .where("run_id", "=", prev.id)
       .where("type", "=", "usage")
+      .where(sql<boolean>`payload->>'purpose' IS NULL`)
       .orderBy("seq", "desc")
-      .limit(8)
-      .execute();
+      .limit(1)
+      .executeTakeFirst();
     type Usage = {
       step: number;
       provider: string;
@@ -136,9 +137,8 @@ export class IdleReturn {
       outputTokens: number;
       cacheReadTokens: number;
       cacheWriteTokens: number;
-      purpose?: string;
     };
-    const usage = usages.map((u) => u.payload as Usage).find((u) => u.purpose === undefined);
+    const usage = usageRow?.payload as Usage | undefined;
     let lastCall: IdleReturnInput["lastCall"] = null;
     if (usage !== undefined) {
       const call = await t
