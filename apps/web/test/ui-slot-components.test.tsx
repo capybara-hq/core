@@ -2,7 +2,7 @@
 // through `ClientComponentBlock`: in the same places as views (anchors unchanged), inside the
 // block's error boundary, with the host context the plugin-client hooks read.
 import { act, cleanup, screen, within } from "@testing-library/react";
-import type { ComponentType, ReactNode } from "react";
+import { type ComponentType, type ReactNode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClientHost } from "../src/components/client-ext/ClientHost";
 import { PLUGIN_CLIENT, type ViewState } from "../src/components/client-ext/host-api";
@@ -90,6 +90,13 @@ afterEach(() => {
   ClientHost.load = realLoad;
 });
 
+/** The properties section titled `title` (the host's frame around a component). */
+const sectionOf = (title: string): HTMLElement => {
+  const section = screen.getByText(title).closest('[data-part="property-section"]');
+  if (!(section instanceof HTMLElement)) throw new Error(`no section titled ${title}`);
+  return section;
+};
+
 const sectionSlot = (anchor: string) => (
   <div data-testid={`after-${anchor}`}>
     <ExtensionSlot
@@ -120,8 +127,36 @@ describe("ClientComponentBlock", () => {
     expect(within(files).getByText("hud body")).toBeTruthy();
     // in the section frame the views get, titled by the contribution
     expect(within(files).getByText("HUD")).toBeTruthy();
-    expect(files.querySelector('[data-extension-section="fake-client/hud"]')).not.toBeNull();
+    expect(sectionOf("HUD").hidden).toBe(false);
     expect(screen.getByTestId("after-context").textContent).toBe("");
+  });
+
+  it("a component that renders nothing leaves no section; content shows it, null hides it again", async () => {
+    let show: (on: boolean) => void = () => {};
+    const Collab = () => {
+      const [on, setOn] = useState(false);
+      show = setOn;
+      return on ? <p>collab body</p> : null;
+    };
+    ClientHost.load = vi.fn(async () =>
+      moduleOf({ collab: { slot: "conversation.properties.section", render: Collab } }),
+    );
+    renderWithHost(
+      [component("collab", "conversation.properties.section", "context")],
+      setOf([{ id: "collab", slot: "conversation.properties.section" }]),
+      sectionSlot("context"),
+    );
+    await flush();
+    // mounted (so it can decide), but its titled frame is not drawn
+    expect(sectionOf("COLLAB").hidden).toBe(true);
+    expect(sectionOf("COLLAB").getAttribute("data-empty")).toBe("true");
+    act(() => show(true));
+    await flush();
+    expect(screen.getByText("collab body")).toBeTruthy();
+    expect(sectionOf("COLLAB").hidden).toBe(false);
+    act(() => show(false));
+    await flush();
+    expect(sectionOf("COLLAB").hidden).toBe(true);
   });
 
   it("a component draws nothing while its module loads, then appears", async () => {
@@ -164,9 +199,8 @@ describe("ClientComponentBlock", () => {
       sectionSlot("context"),
     );
     await flush();
-    const boom = document.querySelector(
-      '[data-extension-section="fake-client/boom"]',
-    ) as HTMLElement;
+    const boom = sectionOf("BOOM");
+    expect(boom.hidden).toBe(false);
     expect(within(boom).getByRole("button", { name: /retry/i })).toBeTruthy();
     expect(screen.getByText("fine body")).toBeTruthy();
     expect(reports()).toEqual([
@@ -253,6 +287,30 @@ describe("ClientComponentBlock", () => {
       }}
     />
   );
+
+  it("a component panel that renders nothing shows the empty state until it draws", async () => {
+    let show: (on: boolean) => void = () => {};
+    const Panel = () => {
+      const [on, setOn] = useState(false);
+      show = setOn;
+      return on ? <p>board body</p> : null;
+    };
+    ClientHost.load = vi.fn(async () =>
+      moduleOf({ board: { slot: "conversation.panel", render: Panel as ComponentType<never> } }),
+    );
+    renderWithHost(
+      [component("board", "conversation.panel")],
+      setOf([{ id: "board", slot: "conversation.panel" }]),
+      panelSlot(() => {}),
+    );
+    await flush();
+    const panel = screen.getByRole("complementary", { name: "BOARD" });
+    expect(within(panel).getByText("Nothing to show in this conversation.")).toBeTruthy();
+    act(() => show(true));
+    await flush();
+    expect(within(panel).getByText("board body")).toBeTruthy();
+    expect(within(panel).queryByText("Nothing to show in this conversation.")).toBeNull();
+  });
 
   it("a loading component panel draws its frame: title, close and the loading state", async () => {
     ClientHost.load = vi.fn(() => new Promise<unknown>(() => {}));
