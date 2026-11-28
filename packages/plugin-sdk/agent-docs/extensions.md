@@ -122,8 +122,9 @@ ctx.setup.check("bot-token", {
 - The `run.lifecycle` hook (`permissions.hooks`) tells the extension each phase of a run of a
   conversation about its subject: `started`, `waiting` (on a person), `resumed` (that wait
   cleared), `finished`, `failed` or `aborted`; and that directed work was not run
-  (`offer_declined`, `reason` `off`, `declined`, `paused`, `expired` or `undelivered`). It is
-  delivered at least once: make the handler idempotent and treat it as a hint. For events about
+  (`offer_declined`, `reason` `off`, `declined`, `paused`, `expired` or `undelivered`, with the
+  event's `eventId` and your `dedupeKey`, so you can tell a stale decline from one for your latest
+  event). It is delivered at least once: make the handler idempotent and treat it as a hint. For events about
   your subjects see `trigger-source`.
 
 ## Extension points

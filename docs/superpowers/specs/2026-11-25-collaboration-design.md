@@ -321,7 +321,9 @@ config, default 30). Dismissing is `inbox.item-dismiss`; clicking an action is a
 - **`run.lifecycle`.** Phases `started`, `waiting`, `resumed`, `finished`, `failed`, `aborted` and
   `offer_declined` (§4.8). The payload carries ids only (org, account, agent, run, conversation,
   subject, `waitingOn` `approval` or `input` for `waiting` and `resumed`); `offer_declined` has
-  `reason` `declined`, `off`, `paused`, `expired` or `undelivered` and no run or conversation. The
+  `reason` `declined`, `off`, `paused`, `expired` or `undelivered`, the event's `eventId` and
+  emitter's `dedupeKey` (to tell a stale decline from one for a newer event), and no run or
+  conversation. The
   plugin must be enabled in the org when the notice is owed and again when it is delivered.
 
 ## 5. Plugin: data (`plugin_collab`)

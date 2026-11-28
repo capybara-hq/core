@@ -3994,6 +3994,8 @@ export interface RunLifecyclePayload {
     agentId: string;
     agentVersion?: number;
     conversationId?: string;
+    dedupeKey?: string;
+    eventId?: string;
     orgId: string;
     phase: "started" | "waiting" | "resumed" | "finished" | "failed" | "aborted" | "offer_declined";
     reason?: RunLifecycleDeclineReason;

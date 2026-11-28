@@ -387,20 +387,23 @@ describe("run.lifecycle: offer_declined", () => {
   const dispatch = (eventId: string) =>
     withOrgScope(orgId, () => k.app.get(TriggerDispatcher).dispatch({ orgId, eventId }));
 
-  async function assign(subject: TriggerSubject = ITEM): Promise<string> {
+  type Assigned = { eventId: string; dedupeKey: string };
+
+  async function assign(subject: TriggerSubject = ITEM): Promise<Assigned> {
     const emit = sourceProbe().emit;
     if (!emit) throw new Error("fake-trigger-source did not set up");
+    const dedupeKey = `key-${randomUUID()}-${++seq}`;
     const r = await emit({
       orgId,
       type: "item.assigned",
       subject,
       facts: { status: "open" },
       summary: "Assigned.",
-      dedupeKey: `key-${randomUUID()}-${++seq}`,
+      dedupeKey,
       audience: { accountId: ownerId, agentId },
       cause: { accountId: ownerId },
     });
-    return r.eventId;
+    return { eventId: r.eventId, dedupeKey };
   }
 
   const setRule = async (mode: "auto" | "confirm" | "off") => {
@@ -419,25 +422,29 @@ describe("run.lifecycle: offer_declined", () => {
       "offer_declined",
     );
 
-  const expected = (reason: string, subject: TriggerSubject = ITEM) => ({
+  const expected = (reason: string, event: Assigned, subject: TriggerSubject = ITEM) => ({
     orgId,
     accountId: ownerId,
     agentId,
     phase: "offer_declined",
     subject: { kind: subject.kind, id: subject.id },
     reason,
+    eventId: event.eventId,
+    dedupeKey: event.dedupeKey,
   });
 
   it("a rule that is off produces offer_declined with reason off, to the event's plugin only", async () => {
     await setRule("off");
-    await dispatch(await assign());
-    expect(await told()).toEqual([expected("off")]);
+    const e = await assign();
+    await dispatch(e.eventId);
+    expect(await told()).toEqual([expected("off", e)]);
     expect(runProbe().calls).toEqual([]);
   });
 
   it("a declined offer produces offer_declined with reason declined", async () => {
     await setRule("confirm");
-    await dispatch(await assign());
+    const e = await assign();
+    await dispatch(e.eventId);
     expect(sourceProbe().lifecycle).toEqual([]);
     const offer = await db
       .selectFrom("automation_offers")
@@ -449,11 +456,11 @@ describe("run.lifecycle: offer_declined", () => {
       url: `/api/v1/orgs/${orgId}/automations/offers/${offer.id}/decline`,
     });
     expect(res.statusCode, res.body).toBe(204);
-    expect(await told()).toEqual([expected("declined")]);
+    expect(await told()).toEqual([expected("declined", e)]);
   });
 
   it("a paused acceptance automation produces offer_declined with reason paused", async () => {
-    await dispatch(await assign());
+    await dispatch((await assign()).eventId);
     const a = await db
       .selectFrom("automations")
       .select("id")
@@ -466,20 +473,22 @@ describe("run.lifecycle: offer_declined", () => {
     });
     expect(paused.statusCode, paused.body).toBe(200);
     const other: TriggerSubject = { kind: "item", id: "ITEM-2", title: "Second" };
-    await dispatch(await assign(other));
-    expect(await told()).toEqual([expected("paused", other)]);
+    const e = await assign(other);
+    await dispatch(e.eventId);
+    expect(await told()).toEqual([expected("paused", e, other)]);
   });
 
   it("an offer the sweep expires produces offer_declined with reason expired", async () => {
     await setRule("confirm");
-    await dispatch(await assign());
+    const e = await assign();
+    await dispatch(e.eventId);
     await db
       .updateTable("automation_offers")
       .set({ created_at: new Date(Date.now() - 8 * 86_400_000) })
       .where("org_id", "=", orgId)
       .execute();
     expect((await k.app.get(TriggerEventSweepJob).sweepAt(new Date())).expiredOffers).toBe(1);
-    expect(await told()).toEqual([expected("expired")]);
+    expect(await told()).toEqual([expected("expired", e)]);
   });
 
   it("a directed event the sweep gives up on produces offer_declined with reason undelivered", async () => {
@@ -494,14 +503,16 @@ describe("run.lifecycle: offer_declined", () => {
         subject: JSON.stringify(ITEM),
         facts: JSON.stringify({ status: "open" }),
         summary: "Assigned before.",
-        dedupe_key: id,
+        dedupe_key: `emitter-key-${id}`,
         audience: JSON.stringify({ accountId: ownerId, agentId }),
         state: "pending",
         created_at: new Date(Date.now() - 25 * 3_600_000),
       })
       .execute();
     await k.app.get(TriggerEventSweepJob).sweepAt(new Date());
-    expect(await told()).toEqual([expected("undelivered")]);
+    expect(await told()).toEqual([
+      expected("undelivered", { eventId: id, dedupeKey: `emitter-key-${id}` }),
+    ]);
   });
 
   it("a plugin that did not declare run.lifecycle is told nothing", async () => {
@@ -509,7 +520,7 @@ describe("run.lifecycle: offer_declined", () => {
       SET permissions = jsonb_set(permissions, '{permissions,hooks}', '[]'::jsonb)
       WHERE plugin = ${SOURCE}`.execute(raw);
     await setRule("off");
-    const e = await assign();
+    const { eventId: e } = await assign();
     await dispatch(e);
     const state = await db
       .selectFrom("trigger_events")

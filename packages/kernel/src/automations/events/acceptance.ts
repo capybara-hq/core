@@ -272,6 +272,7 @@ export class AcceptanceService {
       orgId: ev.org_id,
       plugin: ev.plugin,
       eventId: ev.id,
+      dedupeKey: ev.dedupe_key,
       accountId: audience.accountId,
       agentId: audience.agentId,
       subject: ev.subject,
