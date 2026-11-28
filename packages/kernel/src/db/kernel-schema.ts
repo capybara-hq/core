@@ -624,6 +624,8 @@ export interface RunRecoveryCursorsTable {
   run_id: string | null;
 }
 
+export type IdleMode = "cache" | "compaction_model";
+
 export interface RunsTable {
   /** 0135: the worker acquisition currently authorized to mutate this run. */
   execution_id: string | null;
@@ -679,6 +681,8 @@ export interface RunsTable {
     "manual" | "idle" | null | undefined,
     "manual" | "idle" | null
   >;
+  /** 0199: an idle compact run's mode (compaction model spec §6.1); null on every other run. */
+  idle_mode: ColumnType<IdleMode | null, IdleMode | null | undefined, IdleMode | null>;
 }
 
 /** 0053: one row per sub-agent dispatch (an `Agent` call of a parent run). */
