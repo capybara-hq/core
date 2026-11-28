@@ -1,5 +1,12 @@
 # @capybara-hq/plugin-client
 
+## 0.1.0-rc.11
+
+### Patch Changes
+
+- b43b201: The packages ship their public API reports: `api/plugin-client.api.md` and
+  `api/plugin-sdk.api.md` are now in the published files.
+
 ## 0.1.0-rc.10
 
 ### Minor Changes
