@@ -1,6 +1,6 @@
 "use client";
 
-import { ListPage, type MenuItem, ObjectCard } from "@capybara-hq/design";
+import { DangerConfirm, ListPage, type MenuItem, ObjectCard } from "@capybara-hq/design";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
@@ -18,14 +18,18 @@ import {
   type ConnectorSummary,
   canManageConnectors,
   connectorDescriptionOf,
+  deleteConnector,
   personalConnectors,
 } from "../../../lib/connectors";
 import { retryOnMountOf } from "../../../lib/query/client";
 import { orgComponentsQuery } from "../../../lib/query/components";
 import { connectorQuery, connectorsQuery } from "../../../lib/query/conversation";
+import { keys } from "../../../lib/query/keys";
+import { useAppMutation } from "../../../lib/query/mutation";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
 import type { Me } from "../../../lib/session";
+import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
 /**
@@ -40,7 +44,7 @@ import NotFound from "../not-found";
  * personal one shows the viewer's own state, 连接 (OAuth: the connect route, back here; a
  * credential: its sheet) and, once connected, 权限 (the viewer's own tool policies for their
  * connection), with 如何连接 / 重新连接 / 断开连接 in ⋯ (`usePersonalConnections`); org admins have
- * 修改配置 in ⋯ on every connector card (its detail's 设置 tab). Members read the template cards
+ * 修改配置 and 删除 (the detail's 设置 tab delete, same confirmation) in ⋯ on every connector card. Members read the template cards
  * without actions; guests see the connectors only.
  * From the query cache (the layout prefetched the list, the templates and the personal
  * connectors' details on a first load).
@@ -90,6 +94,13 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     guides: memberGuides,
   });
   const ownerLabel = useOwnerLabel(orgId);
+  const errorMessage = useErrorMessage();
+  // 删除 in ⋯ (org admins): the same mutation and confirmation as the detail's 设置 tab
+  const [deleting, setDeleting] = useState<ConnectorSummary | null>(null);
+  const remove = useAppMutation({
+    fn: (id: string) => deleteConnector(orgId, id),
+    invalidates: () => [keys.org(orgId).connectors()],
+  });
   const { actionsOf, createConnectorOf, dialog, error } = useComponentSwitch({
     orgId,
     admin: manage,
@@ -177,6 +188,9 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     const own = personal.some((p) => p.id === c.id);
     // for org admins: the connector's 凭据 tab, or 设置 without credentials (alone, the one button)
     const config: MenuItem[] = manage ? [connectorAdminItem(c, tn)] : [];
+    const del: MenuItem[] = manage
+      ? [{ label: t("settings.delete"), danger: true, onSelect: () => setDeleting(c) }]
+      : [];
     const description = connectorDescriptionOf(c, locale);
     const base = {
       avatar: { image: c.icon ?? null },
@@ -184,7 +198,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
       ...(description !== null ? { description } : {}),
       href: `/connectors/${encodeURIComponent(c.id)}`,
       meta: [t(`auth.${c.auth.type}`), c.slug],
-      ...(config.length > 0 ? { menu: config } : {}),
+      ...(config.length > 0 ? { menu: [...config, ...del] } : {}),
     };
     if (c.status === "disabled") {
       return (
@@ -208,7 +222,14 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     if (parts === null) {
       return <ObjectCard key={c.id} {...base} state={{ label: t("status.active"), tone: "ok" }} />;
     }
-    return <ObjectCard key={c.id} {...base} {...parts} />;
+    return (
+      <ObjectCard
+        key={c.id}
+        {...base}
+        {...parts}
+        {...(del.length > 0 ? { menu: [...(parts.menu ?? []), ...del] } : {})}
+      />
+    );
   };
 
   /** A template's card: off (enable for admins), or on without a connector (create for admins). */
@@ -285,6 +306,27 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
       </ListPage>
       {dialog}
       {connection.overlays}
+      {deleting !== null && (
+        <DangerConfirm
+          open
+          onOpenChange={(open) => {
+            if (!open) setDeleting(null);
+          }}
+          title={t("settings.deleteTitle", { name: deleting.name })}
+          description={t("settings.deleteHint")}
+          confirmName={deleting.name}
+          confirmLabel={t("settings.delete")}
+          onConfirm={async () => {
+            try {
+              await remove.mutateAsync(deleting.id);
+            } catch (e) {
+              // the dialog stays open and shows why (the translated text)
+              throw new Error(errorMessage(e));
+            }
+            setDeleting(null);
+          }}
+        />
+      )}
     </>
   );
 }
