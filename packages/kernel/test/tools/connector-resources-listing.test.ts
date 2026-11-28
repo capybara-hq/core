@@ -145,8 +145,12 @@ describe("resources listing with connectorId", () => {
   it("filters UI templates and empty resources", async () => {
     const a = await install("one", first);
     const res = await list(a);
-    const body = res.json() as { resources: { uri: string }[]; unavailable: unknown[] };
+    const body = res.json() as {
+      resources: { uri: string; size?: number }[];
+      unavailable: unknown[];
+    };
     expect(body.resources.map((r) => r.uri)).toEqual(["docs://handbook", "docs://unsized"]);
+    expect(body.resources[0]).toMatchObject({ uri: "docs://handbook", size: 12 });
     expect(body.unavailable).toEqual([]);
   });
 
@@ -170,6 +174,27 @@ describe("resources listing with connectorId", () => {
     expect((res.json() as { error: { code: string } }).error.code).toBe(
       "connector.resources_disabled",
     );
+  });
+
+  it("refuses a disabled connector and a deleted one", async () => {
+    const off = await install("off", first);
+    const gone = await install("gone", second);
+    const patched = await req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/connectors/${off}`,
+      payload: { status: "disabled" },
+    });
+    expect(patched.statusCode, patched.body).toBe(200);
+    const deleted = await req({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/connectors/${gone}`,
+    });
+    expect(deleted.statusCode, deleted.body).toBe(204);
+    for (const id of [off, gone]) {
+      const res = await list(id);
+      expect(res.statusCode, res.body).toBe(404);
+      expect((res.json() as { error: { code: string } }).error.code).toBe("connector.not_found");
+    }
   });
 
   it("refuses a connector of another org", async () => {

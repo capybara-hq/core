@@ -21,7 +21,7 @@ const PromptBody = z
   .strict();
 
 const ResourcesQuery = z.object({
-  connectorId: z.string().uuid().optional(),
+  connectorId: z.uuid().optional(),
   query: z.string().max(200).optional(),
 });
 
@@ -49,8 +49,9 @@ export class ConnectorContentController {
   }
 
   /**
-   * 发起人可用的资源，`query` 按名称 / URI / 描述子串过滤；带 `connectorId` 时只在该连接器上开一次会话
-   * （第二级列表，隐藏 UI 模板与空资源）。
+   * The resources the sender can use; `query` filters by name, URI or description substring. With
+   * `connectorId` it opens one session on that connector only (the second level of the picker;
+   * UI templates and empty resources are hidden).
    */
   @Get("resources")
   @OrgAction("connectors.use")

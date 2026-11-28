@@ -320,7 +320,12 @@ export class ConnectorContent {
     return { text };
   }
 
-  /** 发起人可用的资源；`query` 按名称 / URI / 描述的子串过滤（不区分大小写），最多 {@link MAX_RESOURCES} 条。 */
+  /**
+   * The resources the sender can use; `query` filters by name, URI or description substring (case
+   * insensitive). Without `connectorId`: every active connector, at most {@link MAX_RESOURCES}.
+   * With it: one session on that connector, UI templates and empty resources hidden, at most
+   * {@link MAX_CONNECTOR_RESOURCES}.
+   */
   async listResources(
     orgId: string,
     accountId: string,
@@ -350,6 +355,8 @@ export class ConnectorContent {
           "Reading resources is disabled for this connector",
         );
       }
+      // A failing connector throws credential.missing / connector.connect_failed here instead of
+      // filling `unavailable`: the caller asked about this one connector only.
       const items = await this.withSession(
         orgId,
         app,
