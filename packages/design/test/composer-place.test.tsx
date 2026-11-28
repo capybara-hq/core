@@ -506,7 +506,7 @@ describe("the place tray and the even inset", () => {
     expect(strip().parentElement).toBe(frame());
     expect(strip().nextElementSibling).toBe(field());
     expect(field().contains(strip())).toBe(false);
-    // the field holds the text, ＋, send and the control row
+    // the field holds the text, +, send and the control row
     expect(field().contains(screen.getByRole("textbox"))).toBe(true);
     expect(field().querySelector('[data-part="composer-bar"]')).not.toBeNull();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
@@ -550,7 +550,7 @@ describe("the place tray and the even inset", () => {
       (r) => r.selector.includes(".cb-composer-place-full") && r.selector.includes(":hover"),
     );
     expect(hover.length).toBeGreaterThan(0);
-    for (const r of hover) expect(r.selector).toContain(".cb-picker.cb-btn:hover");
+    for (const r of hover) expect(r.selector).toContain(".cb-picker.cb-btn");
   });
 
   it("stands the warning line at the top of the field, under the tray", () => {
@@ -583,7 +583,7 @@ describe("the place tray and the even inset", () => {
     for (const p of ["border", "background", "box-shadow", "padding"]) {
       expect(frameDecls[p], p).toBeUndefined();
     }
-    // no negative margin anywhere on the composer's rows (＋, the strip, the control row)
+    // no negative margin anywhere on the composer's rows (+, the strip, the control row)
     const pulls = rules.filter(
       (r) =>
         r.at === null &&
@@ -636,10 +636,14 @@ describe("the place tray and the even inset", () => {
       "var(--cb-radius-pill)",
     );
     expect(
-      decl(".cb-composer-place-full > .cb-picker.cb-btn:hover:not(:disabled)").background,
+      decl(
+        '.cb-composer-place-full > .cb-picker.cb-btn:not([data-warning="true"]):hover:not(:disabled)',
+      ).background,
     ).toBe("var(--cb-selected)");
     expect(
-      decl('.cb-composer-place-full > .cb-picker.cb-btn[aria-expanded="true"]').background,
+      decl(
+        '.cb-composer-place-full > .cb-picker.cb-btn:not([data-warning="true"])[aria-expanded="true"]',
+      ).background,
     ).toBe("var(--cb-selected)");
     // the separator is gone; the project still gives way first
     expect(rules.some((r) => r.selector.includes("composer-place-sep"))).toBe(false);
@@ -661,5 +665,72 @@ describe("the place tray and the even inset", () => {
     expect(send["margin-inline-end"]).toBe(
       "calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2 - 1px)",
     );
+  });
+
+  it("draws no tray without the box (frame={false}): no ground, radius or overlap", () => {
+    wrap(<ComposerBox {...props({ frame: false })} />);
+    expect(frame().getAttribute("data-frame")).toBe("bare");
+    expect(strip().parentElement).toBe(frame());
+    expect(decl('.cb-composer[data-frame="bare"] > .cb-composer-place')).toMatchObject({
+      margin: "0 0 var(--cb-space-1)",
+      padding: "0",
+      "border-radius": "0",
+      background: "transparent",
+    });
+    // the touch form keeps the chip row's own gap for a bare frame too
+    expect(
+      decl('.cb-composer[data-frame="bare"] > .cb-composer-place', MOBILE_SIZE_QUERY).margin,
+    ).toBe("0 0 var(--cb-space-2)");
+  });
+
+  it("keeps a locked value with a warning muted, with no hover pill", () => {
+    wrap(
+      <ComposerBox
+        {...props({
+          place: {
+            device: devicePicker({ locked: { hint: "不能换设备" } }),
+            project: projectPicker({
+              locked: { hint: "不能换项目", warning: { label: "项目不可用", onInspect: vi.fn() } },
+            }),
+          },
+        })}
+      />,
+    );
+    const warning = within(full()).getByRole("button", { name: /项目不可用/ });
+    expect(warning.getAttribute("data-warning")).toBe("true");
+    const sel = '.cb-composer-place-full > .cb-picker.cb-btn[data-warning="true"]';
+    expect(decl(sel)).toMatchObject({ background: "transparent", color: "var(--cb-muted)" });
+    expect(decl(`${sel}:hover:not(:disabled)`)).toMatchObject({
+      background: "transparent",
+      color: "var(--cb-muted)",
+    });
+  });
+
+  it("puts the tray and the open menu in the frame, outside the field", () => {
+    wrap(
+      <ComposerBox
+        {...props({
+          menu: {
+            node: <div className="cb-cmm" data-testid="menu-node" />,
+            combobox: { role: "combobox", "aria-expanded": true, "aria-autocomplete": "list" },
+            onKeyDown: () => false,
+          },
+        })}
+      />,
+    );
+    const node = screen.getByTestId("menu-node");
+    expect(node.parentElement).toBe(frame());
+    expect(field().contains(node)).toBe(false);
+    expect(strip().parentElement?.classList.contains("cb-composer")).toBe(true);
+    expect(strip().closest(".cb-composer-field")).toBeNull();
+    // the menu comes first, then the tray, then the field
+    expect([...frame().children].map((c) => c.getAttribute("data-part") ?? c.className)).toEqual([
+      "cb-cmm",
+      "composer-place",
+      "composer-field",
+    ]);
+    // the UI part `composer` is the field (the box), never the frame around the tray
+    expect(field().getAttribute("data-cap-part")).toBe("composer");
+    expect(frame().getAttribute("data-cap-part")).toBeNull();
   });
 });

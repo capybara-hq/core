@@ -195,6 +195,8 @@ export function Picker({
         variant="ghost"
         density="dense"
         className="cb-picker"
+        // a locked value with a warning: plain muted text like any locked one (no hover pill)
+        data-warning="true"
         aria-label={`${label}: ${value} · ${locked.warning.label}`}
         title={locked.hint}
         onClick={locked.warning.onInspect}

@@ -638,7 +638,16 @@ function placeProps(locked: boolean): ComposerPlace {
 }
 
 /** The composer with the top strip, the mode button after + and the model · effort at the end. */
-function PlaceComposer({ locked, form }: { locked: boolean; form?: "medium" }) {
+function PlaceComposer({
+  locked,
+  form,
+  bare,
+}: {
+  locked: boolean;
+  form?: "medium";
+  /** Without the frame's box (a plugin's frame around it): the strip is no tray. */
+  bare?: boolean;
+}) {
   const base = composerProps("idle");
   return (
     <ComposerBox
@@ -647,6 +656,7 @@ function PlaceComposer({ locked, form }: { locked: boolean; form?: "medium" }) {
       place={placeProps(locked)}
       mode={modeProps("closed")}
       {...(form ? { referenceForm: form } : {})}
+      {...(bare ? { frame: false } : {})}
     />
   );
 }
@@ -702,6 +712,10 @@ function composerBlocks(): ReactNode {
         force={{ pseudo: ["focus"], selector: '[data-part="composer-input"]' }}
       >
         <PlaceComposer locked />
+      </Block>
+      {/* without the frame's box (`frame={false}`): no tray ground, radius or overlap */}
+      <Block id="composer-place-bare">
+        <PlaceComposer locked={false} bare />
       </Block>
       <RefBlock id="composer-place-medium" width={600} pad>
         <PlaceComposer locked={false} form="medium" />
