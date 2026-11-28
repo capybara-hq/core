@@ -11,6 +11,7 @@ import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { ModelPurposesService } from "../../src/models/purposes.js";
 import type { IdleArmSkip } from "../../src/runtime/context/idle-compaction-rules.js";
+import { CONVERSATION_LOCK_TTL_MS } from "../../src/runtime/conversation-lock.js";
 import { IdleArm } from "../../src/runtime/idle-arm.js";
 import {
   IDLE_COMPACTION_JOB,
@@ -70,6 +71,12 @@ let orgCount = 0;
 let onRunning: ((runId: string, conversationId: string) => Promise<void>) | undefined;
 const hooks: RunHooks = {
   beforeRunning: async (runId, conversationId) => onRunning?.(runId, conversationId),
+  // The production lease, not the 2 s test default (`runConfig`'s `jobLockMs`): this file takes
+  // over no stalled run, and `finishAfter` waits for the worker's own finish. A lease lost in the
+  // decision window (an event loop stalled past the short lease's renewal deadline on a loaded
+  // runner) ends the execution `interrupted` by design; the requeued job then finds the run
+  // terminal (or its conversation deleted) and never finishes it, so the wait never ended (#1098).
+  lockTtlMs: CONVERSATION_LOCK_TTL_MS,
 };
 
 /** About 220k characters: with the reply, the last call is over 50,000 tokens. */
