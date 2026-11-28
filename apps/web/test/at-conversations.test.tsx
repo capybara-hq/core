@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { refusedConversationRefs } from "../src/components/conversation/ComposerBar";
+import { ApiClientError } from "../src/lib/api";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -21,8 +23,8 @@ import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 
 /**
- * @ conversations (spec 2026-11-28 @ conversations §3, plan Task 3): the `@` menu's conversations group
- * lists the sender's conversations by title (never the one written in), a pick becomes a strip
+ * @ conversations (spec 2026-11-28 @ conversations §3, plan Task 3): the `@` menu's conversations
+ * group lists the sender's conversations by title (never the one written in), a pick becomes a strip
  * chip and goes out as `conversationRefs` (the first message too), a refusal marks the refused
  * chips, and the bubble shows a logged message's references as link chips, never their quoted
  * blocks.
@@ -176,7 +178,7 @@ describe("the @ menu's conversations group", () => {
       "Docs",
     ]);
     // the empty query reads the newest six, the current one is dropped
-    expect(listReads(calls)).toEqual([`${LIST}?limit=6`]);
+    expect(listReads(calls)).toEqual([`${LIST}?limit=9`]);
     expect(within(el).queryByText("This conversation")).toBeNull();
     const plan = within(el).getByRole("option", { name: /Quarterly plan/ });
     expect(
@@ -209,14 +211,14 @@ describe("the @ menu's conversations group", () => {
     await within(el).findByRole("option", { name: /Doc 0/ });
     expect(within(el).queryByRole("option", { name: /Doc 5/ })).toBeNull();
     await user.type(input(), "quarterly");
-    await vi.waitFor(() => expect(listReads(calls)).toContain(`${LIST}?limit=6&q=quarterly`));
+    await vi.waitFor(() => expect(listReads(calls)).toContain(`${LIST}?limit=9&q=quarterly`));
     el = await menu();
     await within(el).findByRole("option", { name: /Quarterly review/ });
     await vi.waitFor(() =>
       expect(within(el).queryByRole("option", { name: /Release notes/ })).toBeNull(),
     );
     // only the query the typing left is read
-    expect(listReads(calls)).toEqual([`${LIST}?limit=6`, `${LIST}?limit=6&q=quarterly`]);
+    expect(listReads(calls)).toEqual([`${LIST}?limit=9`, `${LIST}?limit=9&q=quarterly`]);
   });
 
   it("is not listed by + → File library or Connector resources", async () => {
@@ -293,6 +295,116 @@ describe("the @ menu's conversations group", () => {
     expect(untitled.textContent).toContain(limit);
     await user.click(untitled);
     expect(within(strip()).queryByText(en.chat.composerMenu.untitledConversation)).toBeNull();
+  });
+});
+
+describe("menu keys and the draft's identity", () => {
+  it("↵ picks the active conversation row; Backspace through the @ closes without a chip", async () => {
+    chatApi();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    let el = await menu();
+    await within(el).findByRole("option", { name: /Quarterly plan/ });
+    await within(el).findByText("Handbook");
+    // the files' row first, then the first conversation
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(within(strip()).getByText("Quarterly plan")).toBeTruthy();
+    expect(input().value).toBe("");
+    await user.type(input(), "@");
+    el = await menu();
+    await within(el).findByRole("option", { name: /Release notes/ });
+    await user.keyboard("{Backspace}");
+    await vi.waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(input().value).toBe("");
+    expect(within(strip()).queryByText("Release notes")).toBeNull();
+  });
+
+  it("a chip's remove button removes it from the keyboard", async () => {
+    chatApi();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await pick(user, /Quarterly plan/);
+    within(strip())
+      .getByRole("button", { name: /Quarterly plan/ })
+      .focus();
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull());
+  });
+
+  it("a resend keeps the clientMessageId; another set of references gets a new one", async () => {
+    let n = 0;
+    const calls = chatApi({
+      [`POST ${BASE}/messages`]: () => {
+        n += 1;
+        return n < 3
+          ? json(503, { error: { code: "unavailable", message: "try later" } })
+          : json(202, { event: userMsg(9, "x") });
+      },
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await pick(user, /Quarterly plan/);
+    await pick(user, /Release notes/);
+    await user.type(input(), "compare{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    await vi.waitFor(() => expect(input().value).toBe("compare"));
+    await user.type(input(), "{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
+    await vi.waitFor(() => expect(input().value).toBe("compare"));
+    const id = (i: number) =>
+      (bodyOf(posts(calls, `${BASE}/messages`)[i]) as { clientMessageId: string }).clientMessageId;
+    expect(id(1)).toBe(id(0));
+    await user.click(within(strip()).getByRole("button", { name: /Release notes/ }));
+    await user.type(input(), "{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(3));
+    expect(bodyOf(posts(calls, `${BASE}/messages`)[2])).toMatchObject({
+      conversationRefs: [{ id: "c2" }],
+    });
+    expect(id(2)).not.toBe(id(0));
+  });
+});
+
+describe("refusedConversationRefs", () => {
+  const draft = [
+    { id: "c2", title: "Quarterly plan" },
+    { id: "c3", title: null },
+  ];
+  const refused = (code: string, details: unknown[]) =>
+    new ApiClientError(422, code, "refused", [], details);
+
+  it("names the draft's refused ids with their reason, in draft order", () => {
+    expect(
+      refusedConversationRefs(
+        refused("conversation.reference_unavailable", [
+          { id: "c3", reason: "empty" },
+          { id: "c2" },
+        ]),
+        draft,
+      ),
+    ).toEqual([
+      { id: "c2", why: "unavailable" },
+      { id: "c3", why: "empty" },
+    ]);
+    expect(
+      refusedConversationRefs(refused("conversation.reference_self", [{ id: "c2" }]), draft),
+    ).toEqual([{ id: "c2", why: "self" }]);
+  });
+
+  it("marks nothing for ids not in the draft or another error", () => {
+    expect(
+      refusedConversationRefs(refused("conversation.reference_unavailable", [{ id: "x9" }]), draft),
+    ).toEqual([]);
+    expect(
+      refusedConversationRefs(
+        refused("conversation.project_file_unavailable", [{ id: "c2" }]),
+        draft,
+      ),
+    ).toEqual([]);
+    expect(refusedConversationRefs(new Error("boom"), draft)).toEqual([]);
   });
 });
 

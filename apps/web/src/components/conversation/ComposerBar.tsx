@@ -61,7 +61,7 @@ import {
 } from "../../lib/query/conversation";
 import { libraryFileSearchQuery } from "../../lib/query/library";
 import { useAppMutation } from "../../lib/query/mutation";
-import { conversationMentionQuery } from "../../lib/query/shell";
+import { CONVERSATION_MENTION_ROWS, conversationMentionQuery } from "../../lib/query/shell";
 import {
   findInvocable,
   type InvocableSkill,
@@ -231,9 +231,6 @@ const RESOURCE_SEARCH_DELAY_MS = 200;
 
 /** At most this many `@` rows are drawn (the kernel's matches, or one connector's of them). */
 const MAX_RESOURCE_ROWS = 50;
-
-/** At most this many conversations the `@` menu's conversations group lists. */
-const MAX_CONVERSATION_ROWS = 5;
 
 /** `value`, once it has not changed for `ms`. */
 function useDebounced<T>(value: T, ms: number): T {
@@ -1151,15 +1148,15 @@ export function ComposerBar({
   };
 
   /**
-   * The `@` menu's conversations group (@ conversations spec §3): the sender's matching conversations,
-   * newest first, without the one written in and those already referenced, at most
-   * {@link MAX_CONVERSATION_ROWS}; with {@link MAX_CONVERSATION_REFS} referenced the rows are
+   * The `@` menu's conversations group (@ conversations spec §3): the sender's matching
+   * conversations, newest first, without the one written in and those already referenced, at most
+   * {@link CONVERSATION_MENTION_ROWS}; with {@link MAX_CONVERSATION_REFS} referenced the rows are
    * disabled and say why.
    */
   const conversationsGroup = (): ComposerMenuGroup[] => {
     const list = (conversationsQ.data?.conversations ?? [])
       .filter((c) => c.id !== conversationId && !conversationRefs.some((r) => r.id === c.id))
-      .slice(0, MAX_CONVERSATION_ROWS);
+      .slice(0, CONVERSATION_MENTION_ROWS);
     if (list.length === 0) return [];
     const full = conversationRefs.length >= MAX_CONVERSATION_REFS;
     return [

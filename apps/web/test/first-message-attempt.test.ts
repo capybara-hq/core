@@ -39,6 +39,7 @@ describe("first-message intent: what makes it the same logical request", () => {
       request({ message: { text: "go", effort: "high" } }),
       request({ message: { text: "go", skill: { name: "triage" } } }),
       request({ message: { text: "go", files: ["f1"] } }),
+      request({ message: { text: "go", conversationRefs: [{ id: "c2" }] } }),
       request({ message: { text: "go!" } }),
       request({ agentId: "ag2" }),
     ];
@@ -46,6 +47,13 @@ describe("first-message intent: what makes it the same logical request", () => {
     expect(firstMessageIntent("o2", request())).not.toBe(base);
     // empty lists are the same as none (the body leaves both out)
     expect(firstMessageIntent("o1", request({ message: { text: "go", files: [] } }))).toBe(base);
+    expect(
+      firstMessageIntent("o1", request({ message: { text: "go", conversationRefs: [] } })),
+    ).toBe(base);
+    // another referenced conversation is another request
+    const one = request({ message: { text: "go", conversationRefs: [{ id: "c2" }] } });
+    const other = request({ message: { text: "go", conversationRefs: [{ id: "c3" }] } });
+    expect(firstMessageIntent("o1", one)).not.toBe(firstMessageIntent("o1", other));
   });
 });
 

@@ -175,15 +175,17 @@ its conversations.events operation (conversationId <id>).
 ### 3. Web: the @ menu and the bubble
 
 - `@` gains a 会话 group after the files and before the connector resources: `GET
-  /orgs/:orgId/conversations?q=<rested query>&limit=6` through a new `defineQuery`
+  /orgs/:orgId/conversations?q=<rested query>&limit=9` through a new `defineQuery`
   (`conversationMentionQuery`, the same debounce and IME hold as the files), the current
-  conversation dropped client-side, at most 5 rows. Rows: `icon: "chats"`, the title (Untitled →
+  conversation and the already referenced ones dropped client-side, at most 5 rows (9 = 5 rows +
+  the current one + up to 3 referenced, so the dropped rows never leave the group short). Rows: `icon: "chats"`, the title (Untitled →
   「未命名会话」), description `<agent name> · <relative time>`; an empty query lists the most
   recent. Picking adds a conversation chip to the attachment strip (`chats` icon, the title);
   ↵ / Backspace rules as for files. ＋ gains no row (decision: `@` is the way in; open to change).
 - The draft identity, retry and restore paths (`ComposerBar` draft, `first-message-attempt.ts`)
   carry `conversationRefs` like `projectFiles`; a refusal marks the refused chip (as
-  `missingProjectFiles` does) with the error's copy.
+  `missingProjectFiles` does) with the error's copy. Retry of a failed run whose reference has
+  become unavailable shows only the conversation's error line (there is no draft chip to mark).
 - Bubble: `userText` shows `content[0]` when `conversationRefs` is present; `BubbleAttachments`
   gains a link chip (`kind: "conversation"`, `href`, `chats` icon, through the DesignProvider's
   `link`), opening `/chat/<id>`; a deleted or archived target opens the not-found / archived page

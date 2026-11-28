@@ -760,11 +760,11 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
           // referenced conversations: link chips to their pages (a gone one opens the route's
           // not-found or archived page); an empty title draws "Untitled conversation"
           ...(e.conversationRefs ?? []).map(
-            (c): BubbleAttachment => ({
-              id: `conversation:${c.id}`,
+            (ref): BubbleAttachment => ({
+              id: `conversation:${ref.id}`,
               kind: "conversation",
-              name: c.title ?? "",
-              href: `/chat/${encodeURIComponent(c.id)}`,
+              name: ref.title ?? "",
+              href: `/chat/${encodeURIComponent(ref.id)}`,
             }),
           ),
           ...e.attachments.map(
