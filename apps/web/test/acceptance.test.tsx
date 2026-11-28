@@ -7,6 +7,8 @@ import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api"
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 
+// `/automations` reads the remembered view's cookie: none here.
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
@@ -18,14 +20,15 @@ vi.mock("next/navigation", () => ({
 }));
 
 /**
- * Directed work (collaboration spec §4.4) on the web: my acceptance rules on `/account/automations`
- * (Accepting work: one choice per source, saved at once) and a work offer in the inbox (accept or
- * decline).
+ * Directed work (collaboration spec §4.4) on the web: my acceptance rules in the Acceptance rules sheet of
+ * `/automations` (one choice per source, saved at once; the head's entry shows only while a source
+ * directs events to me; `?rules=1` opens it) and a work offer in the inbox (accept or decline).
  */
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
-const RULES = "/api/v1/orgs/o1/automations/acceptance";
+const ORG = "/api/v1/orgs/o1";
+const RULES = `${ORG}/automations/acceptance`;
 const T = "2026-11-25T12:00:00.000Z";
 
 /** A radio's accessible name is its label then its description: match the label's start. */
@@ -36,19 +39,38 @@ const rules = (mode: string | null, directedDefault = "auto") => ({
   directedDefault,
 });
 
-describe("/account/automations: accepting work", () => {
-  beforeEach(() => resetNavigation("/account/automations"));
+/** What the automations page reads besides my rules (the list view, no tasks). */
+const page = {
+  [`GET ${ORG}/automations`]: () => json(200, { items: [] }),
+  [`GET ${ORG}/agents`]: () => json(200, { agents: [] }),
+  [`GET ${ORG}/settings`]: () =>
+    json(200, { settings: { automations: { enabled: true, minIntervalMinutes: 60 } } }),
+  "GET /api/v1/me/preferences": () => json(200, { timeZone: null }),
+};
+
+const sheet = () => screen.findByRole("dialog");
+
+describe("/automations: the acceptance rules sheet", () => {
+  beforeEach(() => resetNavigation("/automations"));
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
   });
 
+  it("no source directs events to me: the head has no Acceptance rules action", async () => {
+    stubApi({ ...page, [`GET ${RULES}`]: () => json(200, { items: [], directedDefault: "auto" }) });
+    await renderRouteWithCache("/automations?view=list", lastStubRoutes(), { locale: "en" });
+    expect(screen.getByRole("heading", { level: 1, name: en.automations.title })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en.acceptance.title })).toBeNull();
+  });
+
   it.each(LOCALES)(
-    "shows each source with the org default chosen; a choice PUTs that source's rule (%s)",
+    "the head opens the sheet; a choice PUTs that source's rule (%s)",
     async (locale) => {
       const m = msgs[locale].acceptance;
       let current = rules(null, "confirm");
       const calls = stubApi({
+        ...page,
         [`GET ${RULES}`]: () => json(200, current),
         [`PUT ${RULES}`]: (call) => {
           const body = bodyOf(call) as { rules: { mode: string | null }[] };
@@ -56,15 +78,19 @@ describe("/account/automations: accepting work", () => {
           return json(200, current);
         },
       });
-      await renderRouteWithCache("/account/automations", lastStubRoutes(), { locale });
-      const group = await screen.findByRole("radiogroup", {
-        name: locale === "zh" ? "协作" : "Collab",
-      });
+      await renderRouteWithCache("/automations?view=list", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await user.click(screen.getByRole("button", { name: m.title }));
+      const dialog = within(await sheet());
+      expect(window.location.search).toBe("?view=list&rules=1");
+      expect(dialog.getByText(m.description)).toBeTruthy();
+      const group = dialog.getByRole("radiogroup", { name: locale === "zh" ? "协作" : "Collab" });
       const byLabel = (label: string) =>
         within(group).getByRole("radio", { name: starting(label) });
       const fallback = m.mode.default.replace("{mode}", m.mode.confirm);
       expect((byLabel(fallback) as HTMLInputElement).checked).toBe(true);
-      await userEvent.setup().click(byLabel(m.mode.off));
+      await user.click(byLabel(m.mode.off));
       await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
         rules: [{ source: "collab", mode: "off" }],
@@ -74,14 +100,48 @@ describe("/account/automations: accepting work", () => {
     },
   );
 
+  it("?rules=1 opens the sheet over the calendar too; closing keeps the view", async () => {
+    stubApi({
+      ...page,
+      [`GET ${RULES}`]: () => json(200, rules(null)),
+      [`GET ${ORG}/automations/calendar`]: () =>
+        json(200, { tasks: [], items: [], collapsed: [], horizon: "2027-01-06T00:00:00.000Z" }),
+    });
+    window.history.replaceState(null, "", "/automations?rules=1");
+    await renderRouteWithCache("/automations?rules=1", lastStubRoutes(), { locale: "en" });
+    const dialog = within(await sheet());
+    expect(dialog.getByRole("radiogroup", { name: "Collab" })).toBeTruthy();
+    await userEvent.setup().keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(window.location.search).toBe("");
+    window.history.replaceState(null, "", "/automations");
+  });
+
+  it("zh: the hints name the source with no space around it", async () => {
+    stubApi({ ...page, [`GET ${RULES}`]: () => json(200, rules(null)) });
+    await renderRouteWithCache("/automations?view=list&rules=1", lastStubRoutes(), {
+      locale: "zh",
+    });
+    const dialog = within(await sheet());
+    const m = zh.acceptance.mode;
+    for (const key of ["autoHint", "confirmHint", "offHint"] as const) {
+      const text = m[key].replace("{source}", "协作");
+      expect(text).not.toMatch(/ 协作|协作 /);
+      expect(dialog.getByText(text)).toBeTruthy();
+    }
+  });
+
   it("going back to the default removes my rule", async () => {
     const calls = stubApi({
+      ...page,
       [`GET ${RULES}`]: () => json(200, rules("auto")),
       [`PUT ${RULES}`]: () => json(200, rules(null)),
     });
-    await renderRouteWithCache("/account/automations", lastStubRoutes(), { locale: "en" });
+    await renderRouteWithCache("/automations?view=list&rules=1", lastStubRoutes(), {
+      locale: "en",
+    });
     const m = en.acceptance;
-    const group = await screen.findByRole("radiogroup", { name: "Collab" });
+    const group = within(await sheet()).getByRole("radiogroup", { name: "Collab" });
     await userEvent.setup().click(
       within(group).getByRole("radio", {
         name: starting(m.mode.default.replace("{mode}", m.mode.auto)),
@@ -93,10 +153,12 @@ describe("/account/automations: accepting work", () => {
     });
   });
 
-  it("no source that assigns work shows the empty line", async () => {
-    stubApi({ [`GET ${RULES}`]: () => json(200, { items: [], directedDefault: "auto" }) });
-    await renderRouteWithCache("/account/automations", lastStubRoutes(), { locale: "en" });
-    expect(await screen.findByText(en.acceptance.empty)).toBeTruthy();
+  it("opened by link with no source: the sheet shows the empty state", async () => {
+    stubApi({ ...page, [`GET ${RULES}`]: () => json(200, { items: [], directedDefault: "auto" }) });
+    await renderRouteWithCache("/automations?view=list&rules=1", lastStubRoutes(), {
+      locale: "en",
+    });
+    expect(within(await sheet()).getByText(en.acceptance.empty)).toBeTruthy();
   });
 });
 

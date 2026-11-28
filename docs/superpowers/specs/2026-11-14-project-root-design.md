@@ -255,7 +255,11 @@ project adds entries to that list rather than a second menu:
   `project`) so the palette can group them **(designer's call: one menu, grouped by source, not one
   menu per source)**.
 - **The project entries come from the conversation's latest `project_root` event**, not from a fresh
-  read of the device, so the menu lists what the model saw in this conversation.
+  read of the device, so the menu lists what the model saw in this conversation. Before a
+  conversation's first run recorded one (a new conversation with a project picked, or a bound one
+  whose run start could not read the device), they come from the project's last known snapshot in
+  the person's own conversations, and a first message can invoke one: amended 2026-11-28 by
+  [project skills before the first run](2026-11-28-project-skills-before-first-run-design.md).
 
 Choosing an entry is unchanged: it fills the composer's skill chip and sends `skill: "project:<name>"`.
 Unlike a platform skill, the body lives on the device: the send reads `SKILL.md` through the device

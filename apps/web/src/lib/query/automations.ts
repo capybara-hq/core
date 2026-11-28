@@ -100,7 +100,7 @@ export const eventSourcesQuery = (orgId: string) =>
     freshness: "orgConfig",
   });
 
-/** My acceptance rules for the sources that assign me work (`/account/automations`). */
+/** My acceptance rules for the sources that direct events to me (the `/automations` rules sheet). */
 export const acceptanceRulesQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).acceptanceRules(),

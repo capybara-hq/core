@@ -454,11 +454,17 @@ export const keys = {
       /** The attachment limits. */
       attachmentLimits: (): readonly unknown[] => [...all, "attachmentLimits"],
       /** An agent's invocable skills, with a conversation's trial drafts when one is named. */
-      invocableSkills: (agentId: string, conversationId: string | null): readonly unknown[] => [
+      invocableSkills: (
+        agentId: string,
+        conversationId: string | null,
+        /** A new conversation's picked device project (none with a conversation). */
+        project: { deviceId: string; name: string } | null = null,
+      ): readonly unknown[] => [
         ...all,
         "invocableSkills",
         agentId,
         conversationId,
+        ...(project === null ? [] : [project.deviceId, project.name]),
       ],
       /** One approval (who may decide, the scopes). */
       approval: (approvalId: string): readonly unknown[] => [...all, "approval", approvalId],

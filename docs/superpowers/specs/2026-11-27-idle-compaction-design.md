@@ -422,7 +422,8 @@ field-by-field `effectiveCompactionSettings` merge, the org "follow platform" st
 | `idleMinTokensFloor` | 200000 | 50000–2000000 | the size floor of §4.1 |
 | `idleMinWindowRatio` | 0.3 | 0.1–0.9 | the share of the window of §4.1 |
 
-There is no delay field: the timing comes from the cache (§5.3). `enabled: false` (automatic
+There is no delay field: the timing comes from the cache (§5.3). (With a compaction model, the
+compaction model design adds `idleDelayMinutes` for its transcript mode only: `2026-11-28-compaction-model-design.md` §6.) `enabled: false` (automatic
 compaction off) also turns idle compaction off. Manual compaction stays available whatever these
 say.
 

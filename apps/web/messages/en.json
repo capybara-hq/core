@@ -2873,7 +2873,6 @@
       "shares": "Shares",
       "myShares": "My shares",
       "notifications": "Notifications",
-      "acceptWork": "Accepting work",
       "navigation": "Navigation"
     },
     "empty": "No connector needs your own credential.",
@@ -7207,7 +7206,7 @@
       "deleteDescription": "The task stops and is removed. Conversations it started stay.",
       "deleteConfirm": "Delete “{name}”?",
       "deleteConfirmBody": "The task stops and is removed. Conversations it started stay.",
-      "deleteAcceptanceBody": "Deleting does not stop the work: while your rule for its source is “Run it at once”, the next work assigned to you makes it again.",
+      "deleteAcceptanceBody": "Deleting does not stop acceptance: while your rule for its source is “Run it at once”, the next event directed to you makes it again.",
       "deleteAcceptanceLink": "Change your acceptance rules",
       "created": "Automation created",
       "saved": "Automation saved",
@@ -7300,7 +7299,8 @@
         "retry": "Retry"
       }
     },
-    "acceptsWork": "Accepts work from {source}"
+    "acceptsWork": "Accepts events from {source}",
+    "acceptanceTag": "Acceptance rule"
   },
   "navSettings": {
     "title": "Navigation",
@@ -7559,21 +7559,19 @@
     }
   },
   "acceptance": {
-    "title": "Accepting work",
-    "description": "What happens when a source in this organization assigns work to you and one of your agents.",
-    "section": "Sources that assign work",
-    "sectionHint": "Your choice for each source. Work always runs as you, with your agent, within the tools you approved.",
-    "empty": "No source in this organization assigns work.",
+    "title": "Acceptance rules",
+    "description": "What happens when a source directs an event to you and one of your agents. It always runs as you, with your agent, within the tools you approved.",
+    "empty": "No source directs events to you yet.",
     "saved": "Saved",
     "mode": {
       "default": "Organization default ({mode})",
       "defaultHint": "Follow the organization's choice, and change with it.",
       "auto": "Run it at once",
-      "autoHint": "Your agent starts on work from {source} through your automation for it, and asks you before anything outside its approved tools.",
+      "autoHint": "Your agent handles events from {source} at once, and asks you before anything outside its approved tools.",
       "confirm": "Ask me first",
-      "confirmHint": "Work from {source} waits in your inbox until you accept or decline it.",
+      "confirmHint": "Events from {source} wait in your inbox until you accept or decline them.",
       "off": "Never",
-      "offHint": "Nothing runs; {source} shows the work as not accepted."
+      "offHint": "Nothing runs; {source} shows them as not accepted."
     }
   }
 }
