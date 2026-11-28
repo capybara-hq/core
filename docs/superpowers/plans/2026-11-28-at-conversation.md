@@ -115,3 +115,9 @@ Follow writing-web-ui's change flow (spec → reference blocks → catalog → c
 - Web copy for the two error codes (apps/web/messages) belongs to Task 3; Task 3 also must make
   `userText` show content[0] when payload.conversationRefs is present. Task 3 runs in worktree
   feat-at-conversation-web, cherry-picked back.
+- T1 review fixes 9126e99d7; T2 review fixes 47e708df9 → 4b24205be; Task 3 web f2cf8bab9 →
+  277e9958b; CJK comments fixed 124865e9e. T3 review (sonnet): Minors only, fixes dispatched to the
+  web agent in this worktree. Branch pushed; reference-update run 46110031650 dispatched.
+- Next: pull the reference PNGs, compare in the Linux Playwright image
+  (COMPARE=composer-menu,attachment-strip,user-bubble; all three already in ACCEPTED), blind review,
+  size classes, merge origin/main, renumber migration if needed (0196 free on 2026-11-28), PR.
