@@ -505,6 +505,22 @@ treats a dial-in device like any other (its provider, report and permission supp
 
 ## Device services and stream holds (browser use spec §5, §6.2)
 
+- **Loopback ports (spec `2026-11-28-browser-loopback-port-grants-design.md`).** A provider that can
+  open exact loopback ports for a service claims `network.loopbackPorts: true` in its permission
+  support (only with `outsideSandbox`, operation boundary; otherwise `limitedBy.loopbackPorts:
+  "device-update"`) and a dial-in device announces the `loopbackPorts` hello feature (`capybara-device`:
+  macOS in `os` mode only). The kernel sends the whole sorted live set as
+  `ensureService` opts `loopbackPorts` (`service.ensure` `network.loopbackPorts`, at most
+  `LOOPBACK_MAX_PORTS_PER_SERVICE`, parsed by `parseLoopbackPorts`) only to providers that claim it;
+  a changed set applies like changed network limits (the device folds the ports into `networkKey`,
+  so the service restarts), and absent or empty closes all. Only the exact hosts in
+  `LOOPBACK_GRANT_HOSTS` on a granted port open; other loopback addresses, private ranges and
+  metadata stay closed, and the owner's outside-sandbox ceiling bounds the effective set. Grants
+  live in `device_loopback_grants` (24 hours); every ensure sends the live set, and the outbox job
+  `device-loopback-refresh` (grant, revoke, ceiling narrowing, deleted conversation or device) and
+  the expiry pass refresh a running service, retrying a failed send. A provider reporting a blocked
+  loopback host gives `port` and `class` in `ServiceBlockedHost`.
+
 - **Services.** Optional `ensureService` / `stopService` / `serviceRequest` (all three, else
   `DeviceServices` refuses `capability_missing`), `openStream` for viewers and `serviceStatus`:
   one named long-lived Node process per device in its own state directory, under the device's
