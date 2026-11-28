@@ -20,7 +20,11 @@ three pieces of chrome change.
    shadow** (a shadow on the warm ground drew a grey fringe; the edge is the colour step alone).
 3. **One colour rule for both themes:** the paper has the most contrast with the text (lightest in the
    light theme, darkest in the dark theme); the ground steps toward the middle; cards on the paper step
-   one level toward the middle too.
+   one level toward the middle too (in light a grey card between the paper and the ground, never a white
+   card on the paper); what floats over the paper (menus, popovers, dialogs, sheets, the palette,
+   tooltips, toasts, the composer) is `raised`, one step lighter than the cards in both themes; form
+   controls sit on `field` (white in light, clear in dark) so they read on a grey card. Amended
+   2026-11-28 (card step, maintainer review of the prototype `proto/card-step`).
 4. The content keeps its maximum width on every page type (centered, white space on both sides).
 5. Inside the paper the page pads by `space.6` (the paper's inset already separates it).
 6. A first-level page (scope / page) draws no path row; deeper pages keep it.
@@ -48,13 +52,17 @@ three pieces of chrome change.
 
 ## Design
 
-### 1. Colours (token values only, no new colour token)
+### 1. Colours (token values; one new colour token, `field`)
 
 | token | light | dark |
 |---|---|---|
 | `sidebar` (now also the shell ground from 600 up) | `#F3F2EE` → **`#EDECE7`** | `#111110` → **`#171716`** |
 | `bg` (the paper) | `#FAF9F6` → **`#FDFDFC`** | `#0A0A0A` (unchanged) |
-| `panel` (cards on the paper) | `#FFFFFF` (unchanged) | `#111110` (unchanged) |
+| `panel` (cards on the paper) | `#FFFFFF` → **`#F9F8F5`** | `#111110` (unchanged) |
+| `panel-2` (half a step from the paper toward `panel`) | `#FCFBF9` → **`#FBFAF8`** | `#0E0E0D` (unchanged) |
+| `raised` (what floats over the paper) | `#FFFFFF` (unchanged; now also menus, dialogs, sheets, palette, tooltips, toasts) | `#141413` (unchanged; same) |
+| `field` (new: the ground of a form control) | **`#FFFFFF`** | **`rgba(0,0,0,0)`** (clear, as before) |
+| `fail` | `#C8302A` → **`#C42E28`** | `#FF5C52` (unchanged) |
 | `hover` | `rgba(26,26,24,0.04)` → **`rgba(26,26,24,0.045)`** | `#171716` → **`rgba(255,255,255,0.04)`** |
 | `sidebar-active` | overlay (unchanged) | `#1A1A18` → **`rgba(255,255,255,0.07)`** |
 | `selected` | overlay (unchanged) | `#1F1F1D` → **`#21211F`** |
@@ -66,6 +74,31 @@ overlay goes from 0.04 to 0.045 (hover on the darker sidebar stays above the 2.5
 `selected` lightens one step so it still stands further from the ground than hover. The existing contrast pairs
 must still pass (`check:tokens`); the light `bg` change also lightens every compact page, which is
 intended (one paper colour). `preview-light` keeps `#FAF9F6` (an icon preview ground, not the page).
+
+**Card step (amendment, 2026-11-28).** The light `panel` was lighter than the paper, so a card (the tool
+box above all) vanished on it. It now steps toward the middle like dark's: `#F9F8F5`, 1.5 OKLab
+lightness below the paper and 3.7 above the ground; `panel-2` is re-derived half a step between paper
+and panel, so code and io inside a card are a slightly lighter inset in light as they are a darker one in
+dark. Overlays move from `panel` to `raised` (`.cb-menu`, `.cb-popover`, `.cb-cmenu`, `.cb-cmm`,
+`.cb-dialog`, `.cb-sheet`, `.cb-bsheet`, `.cb-drawer`, `.cb-palette`, `.cb-tooltip`, `.cb-trend-tip`,
+`.cb-toast`, `.cb-skip-link`, `.cb-conv-latest`, and an unframed table inside a dialog or sheet), so they
+stay one step lighter than the cards in both themes. Controls get the new `field` ground
+(`.cb-input`, `.cb-select`, `.cb-textarea`, `.cb-stepper`, the `.cb-segmented` track, checkbox and
+radio boxes): white in light, clear in dark (dark is unchanged); the compact filled search fields keep
+their filled ground. Light `fail` darkens one step so it keeps 4.5:1 on `selected` over the grey
+card. New `check:tokens` pairs: ink, muted and disabled on `field` over `panel`; ink on hover and
+selected over `raised`, fail and disabled on `raised`; hover and selected separation on `raised`. The
+steps themselves (panel between paper and ground, panel-2 between paper and panel, raised above panel)
+are a test of the built-in values (`packages/design/test/layering-steps.test.ts`), not token pairs:
+the token pairs also bind themes, and a theme need not layer like the built-in palette.
+
+**Themes and `field`.** A theme scheme that leaves out a token takes the built-in value, but the
+built-in light `field` is white only because the built-in cards are grey. So a scheme that recolours
+`panel` without naming `field` gets clear fields (`themeSchemeFallbacks` in the SDK, used by
+`mergeThemeSchemes` and the kernel's theme stylesheet): its controls look as they did before `field`
+existed. A theme author who wants filled controls names `field` in each scheme; the readability check
+then holds ink, muted and disabled on it over the theme's panel. Existing themes (theme-cyberpunk, dark
+only, recolours `panel`) render unchanged and still pass the readability check.
 
 ### 2. The shell from 600 up (`styles/shell.css`, `styles/conversation-page.css`)
 

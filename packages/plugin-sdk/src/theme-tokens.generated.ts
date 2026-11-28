@@ -201,7 +201,4 @@ export const THEME_SEPARATION: readonly (readonly [ground: string, surface: stri
   ["sidebar-active","sidebar",2.5],
   ["hover","raised",2.5],
   ["selected","raised",2.5],
-  ["panel","bg",1.25],
-  ["sidebar","panel",2],
-  ["raised","panel",1],
 ];

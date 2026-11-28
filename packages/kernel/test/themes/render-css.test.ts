@@ -72,6 +72,35 @@ describe("renderThemeCss", () => {
     expect(css).not.toContain("--cb-font");
   });
 
+  it("a scheme that recolours panel without naming field keeps clear fields", () => {
+    const css = renderThemeCss(
+      parse({
+        name: { en: "Cards", zh: "卡片" },
+        schemes: {
+          dark: { color: { accent: "#FF7A1A" } },
+          light: { color: { panel: "#F7F7F7" } },
+        },
+      }),
+      url,
+    );
+    expect(block(css, ':root[data-theme="light"]')).toBe(
+      "--cb-panel: #F7F7F7; --cb-field: rgba(0,0,0,0);",
+    );
+    // a scheme that leaves panel alone keeps the built-in field
+    expect(block(css, ':root[data-theme="dark"]')).toBe("--cb-accent: #FF7A1A;");
+    // a scheme that names field keeps its own
+    const named = renderThemeCss(
+      parse({
+        name: { en: "Fields", zh: "输入框" },
+        schemes: { light: { color: { panel: "#F7F7F7", field: "#FFFFFF" } }, dark: {} },
+      }),
+      url,
+    );
+    expect(block(named, ':root[data-theme="light"]')).toBe(
+      "--cb-panel: #F7F7F7; --cb-field: #FFFFFF;",
+    );
+  });
+
   it("fonts: @font-face rules from asset URLs and the families first in their role's stack", () => {
     const css = renderThemeCss(neonGrid(), url);
     expect(css).toContain(

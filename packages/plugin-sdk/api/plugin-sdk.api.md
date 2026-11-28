@@ -5136,6 +5136,9 @@ export interface ThemeLogo {
 export type ThemeScheme = "dark" | "light";
 
 // @public
+export function themeSchemeFallbacks(overridden: ReadonlySet<string>): Record<string, string>;
+
+// @public
 export interface ThemeSchemeOverride {
     color?: Record<string, string>;
     radius?: Partial<Record<"sm" | "md" | "bubble", number>>;
