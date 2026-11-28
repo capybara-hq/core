@@ -17,6 +17,8 @@ class InvocableSkillsQuery extends createZodDto(ListQuery, "InvocableSkillsQuery
  * (`agents.use`, human principals: invocations are sent from a conversation); an agent the caller
  * cannot use → 404 `agent.not_found`; a `conversationId` that is not the caller's conversation with
  * this agent → 404 `conversation.not_found` (with it, that conversation's trial drafts apply).
+ * Without a conversation, `deviceId` and `project` add the picked project's skills from its last
+ * known snapshot among the caller's own conversations.
  */
 @Controller("api/v1/orgs/:orgId/agents/:agentId/invocable-skills")
 export class InvocableSkillsController {
@@ -33,7 +35,15 @@ export class InvocableSkillsController {
   ): Promise<{ skills: InvocableSkill[] }> {
     const p = requireUser(principal);
     return {
-      skills: await this.invoker.listFor(org.orgId, agentId, p.account.id, q.conversationId),
+      skills: await this.invoker.listFor(
+        org.orgId,
+        agentId,
+        p.account.id,
+        q.conversationId,
+        q.deviceId !== undefined && q.project !== undefined
+          ? { deviceId: q.deviceId, project: q.project }
+          : undefined,
+      ),
     };
   }
 }

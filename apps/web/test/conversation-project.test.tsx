@@ -148,6 +148,42 @@ describe("binding a new conversation to a project (the top strip)", () => {
     });
   });
 
+  it("the / menu lists the picked project's skills (as last read) and sends one as project:<name>", async () => {
+    resetNavigation("/");
+    const INVOCABLE = `${ORG}/agents/ag1/invocable-skills`;
+    const projectSkill = {
+      id: "project:fix-issue",
+      name: "project:fix-issue",
+      source: "project",
+      description: "Fix an issue",
+      version: 0,
+      manual: false,
+      fork: false,
+    };
+    const routes = {
+      ...newRoutes(),
+      [`GET ${INVOCABLE}`]: () => json(200, { skills: [] }),
+      [`GET ${INVOCABLE}?deviceId=e1&project=core`]: () => json(200, { skills: [projectSkill] }),
+      [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
+      [`POST ${ORG}/conversations/first-message`]: createdAt,
+    };
+    const calls = stubApi(routes);
+    await renderRouteWithCache("/", routes);
+    const user = userEvent.setup();
+    await user.click(await vi.waitFor(() => projectPicker() as HTMLElement));
+    await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
+    await user.type(input(), "/");
+    await user.click(await screen.findByRole("option", { name: /^fix-issue/ }));
+    expect(calls.some((c) => c.url === `${INVOCABLE}?deviceId=e1&project=core`)).toBe(true);
+    await user.type(input(), "1063{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+      deviceId: "e1",
+      project: "core",
+      message: { skill: { name: "project:fix-issue" } },
+    });
+  });
+
   it("自由模式 (the default) sends no project", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
