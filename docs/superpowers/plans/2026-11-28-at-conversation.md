@@ -106,4 +106,12 @@ Follow writing-web-ui's change flow (spec → reference blocks → catalog → c
 
 - Worktree `.claude/worktrees/feat-at-conversation`, branch `feat/at-conversation` from origin/main
   f9ac5f9cc.
-- Plan written.
+- Plan written (837d90000).
+- Wave 1: Task 1 kernel 45f62d4a8 + a071d97c3; Task 2 design e10e15f8d cherry-picked as 6d4b3d5dd
+  (built in worktree feat-at-conversation-design). Reconstruct 65/65 before, 66/66 after.
+- Reviews: T1 (opus) no Critical; Important: skill-invocation user_message quoted as skill body;
+  Minors: SQL filter for text rows + anyUser test, create retry test, clipMiddle over limit. Quote
+  delimiter hardening skipped (approved format). T2 (sonnet): 6 Minors. Fixes dispatched.
+- Web copy for the two error codes (apps/web/messages) belongs to Task 3; Task 3 also must make
+  `userText` show content[0] when payload.conversationRefs is present. Task 3 runs in worktree
+  feat-at-conversation-web, cherry-picked back.
