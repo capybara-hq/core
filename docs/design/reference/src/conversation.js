@@ -919,7 +919,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
     const M = F.COMPOSER_MENU_FIXTURE;
     if (o.state === "compact") return composerMenuSheet();
     const kind = { plus: "plus", slash: "slash" }[o.state] ?? "at";
-    // conversations: the @ menu's 会话 group after the files (at-conversation spec §3)
+    // conversations: the @ menu's Conversations group after the files (at-conversation spec §3)
     const groups = { plus: M.plus, slash: M.slash, at: M.at, conversations: [M.at[0], M.conversations] }[o.state] ?? [];
     const value = { plus: "", slash: "/", at: `对比一下 @${M.atQuery}`, conversations: `对比一下 @${M.atQuery}`, empty: `@${M.emptyQuery}`, loading: `@${M.atQuery}` }[o.state];
     const key = (k, label) => `<span class="r-cmm-key">${esc(k)}</span> ${esc(label)}`;

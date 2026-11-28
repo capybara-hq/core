@@ -370,7 +370,7 @@ export type AttachmentStripItem = {
   id: string;
   /** `conversation`: a referenced conversation (§6.16.21): the `chats` icon and its title. */
   kind: "image" | "file" | "conversation";
-  /** The file's name, or the conversation's title (empty: 未命名会话 / Untitled conversation). */
+  /** The file's name, or the conversation's title (empty: "Untitled conversation"). */
   name: string;
   contentType?: string;
   /** Bytes; absent when unknown (a referenced file that is not an upload): no size shown. */

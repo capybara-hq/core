@@ -1615,7 +1615,7 @@ export const COMPOSER_MENU_FIXTURE: {
   plus: FixtureComposerMenuGroup[];
   slash: FixtureComposerMenuGroup[];
   at: FixtureComposerMenuGroup[];
-  /** The @ menu's 会话 group for the same query, drawn after the files (state `conversations`). */
+  /** The @ menu's Conversations group for the same query, drawn after the files (state `conversations`). */
   conversations: FixtureComposerMenuGroup;
   atQuery: string;
   emptyQuery: string;
@@ -1794,7 +1794,7 @@ export const COMPOSER_MENU_FIXTURE: {
 
 export type FixtureConversationRef = {
   id: string;
-  /** Empty: a conversation without a title (the chip reads 未命名会话). */
+  /** Empty: a conversation without a title (the chip reads "Untitled conversation"). */
   title: string;
   href: string;
 };

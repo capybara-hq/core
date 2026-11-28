@@ -204,7 +204,7 @@ export type BubbleAttachment = {
   id: string;
   /** `conversation`: a referenced conversation, a link chip to `href` (§6.16.6). */
   kind: "image" | "file" | "conversation";
-  /** The file's name, or the conversation's title (empty: 未命名会话 / Untitled conversation). */
+  /** The file's name, or the conversation's title (empty: "Untitled conversation"). */
   name: string;
   /** Type badge (e.g. "PDF"). */
   type?: string;

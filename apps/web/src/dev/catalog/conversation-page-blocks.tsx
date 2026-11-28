@@ -802,7 +802,7 @@ function composerMenuBlocks(): ReactNode {
           }}
         />
       </Block>
-      {/* the @ menu's 会话 group after the files (the at-conversation spec §3) */}
+      {/* the @ menu's Conversations group after the files (the at-conversation spec §3) */}
       <Block id="composer-menu-conversations" offsetTop={420}>
         <ComposerMenuComposer
           value={`对比一下 @${M.atQuery}`}
