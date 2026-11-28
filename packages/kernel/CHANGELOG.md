@@ -1,5 +1,19 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.111
+
+### Patch Changes
+
+- b217214: `POST …/conversations/first-message` now forwards `projectFiles` (checked on the device and
+  logged as project file blocks, or refused with `conversation.project_file_unavailable`) and the
+  request's abort signal, like `POST …/conversations`.
+- 1f75908: `run.lifecycle` `offer_declined` payloads name the declined event: `eventId` (the kernel's id) and
+  `dedupeKey` (the key the plugin passed to `ctx.triggers.emit`), for every reason, so a plugin can
+  tell a stale decline from one for its latest event of the subject.
+- Updated dependencies [1f75908]
+- Updated dependencies [b43b201]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.88
+
 ## 0.1.0-rc.110
 
 ### Patch Changes
