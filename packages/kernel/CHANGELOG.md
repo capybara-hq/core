@@ -1,5 +1,30 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.112
+
+### Patch Changes
+
+- 45f62d4: A message can reference up to three of the sender's own conversations (`conversationRefs: [{id}]`
+  on the send, create and first-message bodies): each is read at send time into a bounded English
+  quoted block (its latest summary and the messages after it, or its last messages) logged in the
+  `user_message` with `payload.conversationRefs`; refusals are `conversation.reference_unavailable`
+  and `conversation.reference_self`. A partial index speeds up the latest summary lookup.
+- 87d22ce: Light cards step toward the middle (layered shell rule 3): `panel` `#F9F8F5`, `panel-2` `#FBFAF8`,
+  light `fail` `#C42E28`; menus, dialogs, sheets, the palette, tooltips and toasts sit on `raised`; a
+  new `field` token (white in light, clear in dark) grounds inputs, selects, textareas, steppers, the
+  segmented track and checkbox / radio boxes. The theme token report gains `field` and the new
+  contrast and separation pairs. A theme scheme that recolours `panel` without naming `field` keeps
+  clear fields (`themeSchemeFallbacks`, used by `mergeThemeSchemes` and the kernel's theme stylesheet).
+- 23d3e04: `ctx.inbox.post` takes `title` and `body` as a single string or as `{ zh, en }` (like action
+  labels); a bilingual text is stored as given (migration 0197) and the inbox, the push preview and
+  the Platform tool's dismiss confirmation show it in the reader's language. The acceptance
+  automation's prompt now states the mechanism for any directed event instead of "this work was
+  assigned to you"; migration 0198 updates unedited acceptance prompts.
+- b0a9f97: Log redaction no longer slows down with many secrets that share a prefix: the matcher probes one set per distinct secret length instead of scanning every secret in the prefix bucket.
+- Updated dependencies [87d22ce]
+- Updated dependencies [23d3e04]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.89
+
 ## 0.1.0-rc.111
 
 ### Patch Changes

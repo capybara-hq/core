@@ -1,5 +1,19 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.53
+
+### Patch Changes
+
+- 87d22ce: Light cards step toward the middle (layered shell rule 3): `panel` `#F9F8F5`, `panel-2` `#FBFAF8`,
+  light `fail` `#C42E28`; menus, dialogs, sheets, the palette, tooltips and toasts sit on `raised`; a
+  new `field` token (white in light, clear in dark) grounds inputs, selects, textareas, steppers, the
+  segmented track and checkbox / radio boxes. The theme token report gains `field` and the new
+  contrast and separation pairs. A theme scheme that recolours `panel` without naming `field` keeps
+  clear fields (`themeSchemeFallbacks`, used by `mergeThemeSchemes` and the kernel's theme stylesheet).
+- 476dfaa: Desktop shell: in the rail form the paper's colour now starts below the top-row band, so the macOS
+  traffic lights and the band's sidebar toggle sit on the ground instead of overlapping the paper's
+  corner; the conversation title bar or a deeper page's path row stays in the band after the toggle.
+
 ## 0.2.0-rc.52
 
 ### Patch Changes
