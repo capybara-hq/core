@@ -183,6 +183,8 @@ export type ThreadProps = {
    * the end of the thread until the compaction's event replaces it.
    */
   compaction?: CompactionProgress | null;
+  /** The running compaction is an idle compact run (its row says it works in the background). */
+  compactionIdle?: boolean;
   /**
    * The accounts the log names, by id (the events response's `people`): who stopped a run, decided
    * or answered a card, wrote a message. The cards inside the thread read it from its context.
@@ -276,6 +278,7 @@ export function Thread({
   renderTask,
   runLinks,
   compaction,
+  compactionIdle = false,
   people = NO_PEOPLE,
 }: ThreadProps) {
   const t = useTranslations("chat");
@@ -436,7 +439,7 @@ export function Thread({
           {entries.map((e) => (
             <EntryView key={e.key} e={e} c={ctx} />
           ))}
-          {compaction ? <CompactingRow progress={compaction} /> : null}
+          {compaction ? <CompactingRow progress={compaction} idle={compactionIdle} /> : null}
         </Stack>
       </div>
     </PeopleContext.Provider>
@@ -1003,9 +1006,12 @@ function DividerView({
         <RunDivider
           kind="compacted"
           text={
-            e.savedTokens !== null
-              ? t("divider.compactedSaved", { n: e.savedTokens })
-              : t("divider.compacted")
+            e.idle === true
+              ? // the idle divider carries its help line (where to turn it off) after the count
+                `${t("divider.compactedIdle", { n: e.savedTokens ?? 0 })} · ${t("divider.compactedIdleHelp")}`
+              : e.savedTokens !== null
+                ? t("divider.compactedSaved", { n: e.savedTokens })
+                : t("divider.compacted")
           }
           action={{
             expanded: open,

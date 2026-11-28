@@ -54,6 +54,7 @@ import {
   buildEventTimeline,
   composerWait,
   type FailedRun,
+  isIdleCompactRun,
   latestModel,
   latestUsage,
   type RunStats,
@@ -576,6 +577,7 @@ export function useConversationPage(
           info={info}
           reasoningOf={selection.reasoningOf}
           compaction={conv.compaction}
+          compactionIdle={isIdleCompactRun(conv.events, conv.compaction?.runId)}
           people={conv.people}
           runLinks={{
             agentOwnerId: agent?.ownerAccountId,

@@ -280,7 +280,7 @@ export interface ConnectItem {
 }
 
 export type DividerData =
-  | { divider: "compacted"; summary: string; savedTokens: number | null }
+  | { divider: "compacted"; summary: string; savedTokens: number | null; idle?: true }
   /** A manual compaction found nothing to summarize (`compaction_skipped`). */
   | { divider: "compact-skipped" }
   /** A manual compaction failed: its `compaction_failed` reason, or its run's failure. */
@@ -290,6 +290,14 @@ export type DividerData =
   | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null }
   /** A person switched the conversation's model or effort (`model_switched`, reason `user`). */
   | { divider: "switched"; model: ModelRef | null; effort: string | null };
+
+/** Whether `runId` is a compact run the idle job started (its `run_started.compactOrigin`). */
+export function isIdleCompactRun(events: readonly ConversationEvent[], runId: string | undefined) {
+  if (runId === undefined) return false;
+  return events.some(
+    (e) => e.runId === runId && e.type === "run_started" && e.payload.compactOrigin === "idle",
+  );
+}
 
 /** A run's tokens: every `usage` of the run (its step calls and compaction). */
 export interface RunTokens {
@@ -1214,12 +1222,14 @@ export function buildEventTimeline(
       tokens: RunTokens | null;
       /** `run_started.trigger`: `compact` is a manual compaction (its row names itself). */
       compact: boolean;
+      /** `run_started.compactOrigin: "idle"`: a compact run the idle job started (quiet). */
+      idle: boolean;
     }
   >();
   const runOf = (runId: string) => {
     let r = runs.get(runId);
     if (r === undefined) {
-      r = { clock: null, model: null, tokens: null, compact: false };
+      r = { clock: null, model: null, tokens: null, compact: false, idle: false };
       runs.set(runId, r);
     }
     return r;
@@ -1242,6 +1252,9 @@ export function buildEventTimeline(
   /** Whether the event belongs to a manual compact run (`run_started.trigger: "compact"`). */
   const isCompact = (e: ConversationEvent) =>
     e.runId !== null && runs.get(e.runId)?.compact === true;
+  /** Whether the event belongs to an idle compact run: only its summary draws anything. */
+  const isIdleCompact = (e: ConversationEvent) =>
+    e.runId !== null && runs.get(e.runId)?.idle === true;
   /** Failed runs by the user seq they would retry. */
   const failedBySeq = new Map<number, number>();
   /** The model the person switched to (the `from` of a fallback). */
@@ -1356,6 +1369,7 @@ export function buildEventTimeline(
           else r.clock.restart(at);
           if (r.model === null) r.model = e.payload.model;
           if (e.payload.trigger === "compact") r.compact = true;
+          if (e.payload.compactOrigin === "idle") r.idle = true;
           models.set(e.runId, e.payload.model);
           if (e.payload.triggerAccountId !== undefined)
             starters.set(e.runId, e.payload.triggerAccountId);
@@ -2130,13 +2144,14 @@ export function buildEventTimeline(
           divider: "compacted",
           summary: e.payload.text,
           savedTokens: savedTokensOf(e.payload.savedTokens),
+          ...(isIdleCompact(e) ? { idle: true as const } : {}),
         });
         break;
       case "compaction_failed":
         // A manual compact run's failure is its outcome (the person clicked "Compact
         // conversation"): a divider says so. An automatic compaction's failure is the step's own
         // concern (it trims instead), so it stays silent.
-        if (isCompact(e)) {
+        if (isCompact(e) && !isIdleCompact(e)) {
           out.push({
             kind: "divider",
             key,
@@ -2166,7 +2181,8 @@ export function buildEventTimeline(
       case "run_aborted":
         if (isCompact(e)) {
           runData(e);
-          out.push({ kind: "divider", key, divider: "compact-stopped" });
+          // an idle run's stop (superseded or a person's) is silent (decision D3)
+          if (!isIdleCompact(e)) out.push({ kind: "divider", key, divider: "compact-stopped" });
           break;
         }
         out.push({
@@ -2181,7 +2197,14 @@ export function buildEventTimeline(
         const { code, message } = e.payload.error;
         if (isCompact(e)) {
           runData(e);
-          out.push({ kind: "divider", key, divider: "compact-failed", reason: firstLine(message) });
+          if (!isIdleCompact(e)) {
+            out.push({
+              kind: "divider",
+              key,
+              divider: "compact-failed",
+              reason: firstLine(message),
+            });
+          }
           break;
         }
         const denial =

@@ -690,6 +690,75 @@ describe("buildTimeline", () => {
     });
   });
 
+  describe("an idle compact run draws only its summary (idle compaction S10, decision D3)", () => {
+    const idleRun = (...rest: ReturnType<typeof ev>[]) =>
+      buildTimeline(
+        [
+          ev(1, "run_started", {
+            agentVersion: 1,
+            model: { provider: "p", model: "m" },
+            trigger: "compact",
+            compactOrigin: "idle",
+          }),
+          ...rest,
+        ],
+        [],
+        new Map(),
+        "en",
+      );
+    it("summarized: the idle divider alone", () => {
+      expect(
+        idleRun(
+          ev(2, "compaction_summary", { coversUpToSeq: 1, text: "summary", savedTokens: 1234 }),
+          ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
+        ),
+      ).toEqual([
+        {
+          kind: "divider",
+          key: "e2",
+          divider: "compacted",
+          idle: true,
+          summary: "summary",
+          savedTokens: 1234,
+        },
+      ]);
+    });
+    it("superseded, stopped by a person and failed draw nothing", () => {
+      expect(idleRun(ev(2, "run_aborted", { byAccountId: null, reason: "superseded" }))).toEqual(
+        [],
+      );
+      expect(idleRun(ev(2, "run_aborted", { byAccountId: "a1", reason: "user" }))).toEqual([]);
+      expect(
+        idleRun(
+          ev(2, "compaction_failed", { attempt: 1, reason: "provider 500" }),
+          ev(3, "run_failed", { error: { code: "run.failed", message: "boom" } }),
+        ),
+      ).toEqual([]);
+    });
+    it("a manual compact run keeps its failure and stop dividers", () => {
+      const manual = (...rest: ReturnType<typeof ev>[]) =>
+        buildTimeline(
+          [
+            ev(1, "run_started", {
+              agentVersion: 1,
+              model: { provider: "p", model: "m" },
+              trigger: "compact",
+            }),
+            ...rest,
+          ],
+          [],
+          new Map(),
+          "en",
+        );
+      expect(manual(ev(2, "compaction_failed", { attempt: 1, reason: "x" }))).toEqual([
+        { kind: "divider", key: "e2", divider: "compact-failed", reason: "x" },
+      ]);
+      expect(manual(ev(2, "run_aborted", { byAccountId: "a1", reason: "user" }))).toEqual([
+        { kind: "divider", key: "e2", divider: "compact-stopped" },
+      ]);
+    });
+  });
+
   it("a run that ended at a limit keeps it on its row; a completed run has none (issue #951)", () => {
     const run = (reason: string) =>
       buildTimeline(

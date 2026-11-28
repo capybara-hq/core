@@ -29,6 +29,12 @@ describe("CompactingRow", () => {
     expect(screen.getByRole("img", { name: "In progress" })).toBeTruthy();
   });
 
+  it("reads as a background compaction for an idle run", () => {
+    renderPage(<CompactingRow progress={progress()} idle />);
+    expect(row().textContent).toContain("Compacting in the background…");
+    expect(row().textContent).not.toContain("Compacting conversation…");
+  });
+
   it("shows a real 1/3 in the chunked path", () => {
     renderPage(<CompactingRow progress={progress({ chunk: 1, chunks: 3 })} />);
     expect(row().textContent).toContain("1/3");
