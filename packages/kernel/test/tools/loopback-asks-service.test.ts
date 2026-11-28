@@ -822,7 +822,6 @@ describe("loopback port asks", () => {
     await navigate();
     await waitForTerminal(db, s.conversationId, 1, 30_000);
     expect(crashed).toBe(true);
-    const evs = await eventsOf(db, s.conversationId);
     expect(await startedAttempts()).toEqual([1, 2]);
     const [r, ...rest] = await results();
     expect(rest).toEqual([]);

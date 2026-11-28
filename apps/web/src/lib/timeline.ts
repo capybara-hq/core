@@ -1688,7 +1688,8 @@ export function buildEventTimeline(
         }
         // the review admitted the command outside the OS sandbox (a per-call escalation)
         if (p.review?.sandbox === "escalated") row.outsideSandbox = true;
-        // Full access granted the crossing by itself: the row says so, neutrally, with its kind
+        // Full access granted the crossing by itself: the row says so, neutrally, with its kind (a
+        // loopback port grant is marked by its own review record, `permission_reviewed`, below)
         if (
           p.review?.decisionSource === "full-access" &&
           p.review.crossing !== undefined &&
@@ -1784,6 +1785,32 @@ export function buildEventTimeline(
           });
           groupReveals.set(c.group, list);
         }
+        break;
+      }
+      case "permission_reviewed": {
+        // a loopback port Full access or the review model granted without asking the person: the
+        // call's row names the port (the re-run's result carries no review of its own)
+        const p = e.payload as {
+          scopeKind?: unknown;
+          outcome?: unknown;
+          decisionSource?: unknown;
+          binding?: { callId?: unknown };
+          loopback?: { port?: unknown };
+        };
+        const port = p.loopback?.port;
+        if (
+          p.scopeKind !== "loopback-port" ||
+          p.outcome !== "allow" ||
+          typeof port !== "number" ||
+          typeof p.binding?.callId !== "string"
+        )
+          break;
+        if (p.decisionSource !== "full-access" && p.decisionSource !== "review-model") break;
+        const c = calls.get(callKey(e.runId, p.binding.callId));
+        if (!c) break;
+        c.tool.row.autoGranted = "loopback-port";
+        c.tool.row.autoGrantedPort = port;
+        if (p.decisionSource === "review-model") c.tool.row.approvedBy = "review-model";
         break;
       }
       case "tool_ask_decided": {

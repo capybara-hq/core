@@ -627,6 +627,40 @@ describe("ToolGroup (§6.16.8)", () => {
     expect(running.container.querySelector('[data-part="auto-granted-word"]')).toBeNull();
   });
 
+  it("a loopback port grant names its port and who allowed it in one phrase", () => {
+    const auto = wrap(
+      <ToolRow
+        row={builtin("Bash", {
+          kind: "command",
+          keyArg: "open",
+          autoGranted: "loopback-port",
+          autoGrantedPort: 3999,
+        })}
+      />,
+    );
+    expect(auto.container.querySelector('[data-part="auto-granted-word"]')?.textContent).toBe(
+      " · 已自动允许访问本机端口 3999（本会话，24 小时）",
+    );
+    cleanup();
+    const review = wrap(
+      <ToolRow
+        row={builtin("Bash", {
+          kind: "command",
+          keyArg: "open",
+          autoGranted: "loopback-port",
+          autoGrantedPort: 3999,
+          approvedBy: "review-model",
+        })}
+      />,
+      "en",
+    );
+    expect(review.container.querySelector('[data-part="auto-granted-word"]')?.textContent).toBe(
+      " · The review model allowed access to local port 3999 (this conversation, 24 hours)",
+    );
+    // one phrase: no separate approved-by words
+    expect(review.container.querySelector('[data-part="approved-by-word"]')).toBeNull();
+  });
+
   it("approvedBy adds the neutral words on done and failed rows only", () => {
     const auto = wrap(
       <ToolRow row={builtin("Bash", { kind: "command", keyArg: "ls", approvedBy: "auto" })} />,

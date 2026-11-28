@@ -211,7 +211,7 @@ const owedRefreshes = async () =>
 
 /** The refresh jobs in BullMQ that have not finished. */
 const pendingRefreshJobs = async () =>
-  (await maintenance.getJobs(["waiting", "paused", "active", "delayed", "prioritized"])).filter(
+  (await maintenance.getJobs(["waiting", "active", "delayed", "prioritized"])).filter(
     (j) => j?.name === LOOPBACK_REFRESH_JOB,
   );
 

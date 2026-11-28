@@ -276,6 +276,44 @@ describe("buildTimeline", () => {
     expect(rows[3]).not.toHaveProperty("autoGranted");
   });
 
+  it("a loopback port Full access or the review model granted marks the call's row with the port", () => {
+    const reviewed = (seq: number, callId: string, decisionSource: string, outcome = "allow") =>
+      ev(seq, "permission_reviewed", {
+        binding: { runId: "r1", callId },
+        scopeKind: "loopback-port",
+        loopback: { service: "browser", port: 3999 },
+        outcome,
+        reason: "x",
+        decisionSource,
+        crossing: "loopback-port",
+      });
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: "Bash", input: { command: "open" } },
+        { id: "b", name: "Bash", input: { command: "open" } },
+        { id: "c", name: "Bash", input: { command: "open" } },
+      ]),
+      reviewed(3, "a", "full-access"),
+      reviewed(4, "b", "review-model"),
+      // a refusal is no grant
+      reviewed(5, "c", "review-model", "deny"),
+      // the rerun's result carries no review of its own
+      result(6, "a", "Bash"),
+      result(7, "b", "Bash"),
+      result(8, "c", "Bash"),
+    ];
+    const rows = tools(buildTimeline(events, [], new Map(), "zh"))[0]?.rows.map((r) => r.row) ?? [];
+    expect(rows[0]).toMatchObject({ autoGranted: "loopback-port", autoGrantedPort: 3999 });
+    expect(rows[0]).not.toHaveProperty("approvedBy");
+    expect(rows[1]).toMatchObject({
+      autoGranted: "loopback-port",
+      autoGrantedPort: 3999,
+      approvedBy: "review-model",
+    });
+    expect(rows[2]).not.toHaveProperty("autoGranted");
+  });
+
   it("a call to a tool the step did not load (not_loaded view) is a neutral notice, not a failure", () => {
     const text =
       'Tool "plugin__memory__view" is not loaded. Call ToolSearch first with keywords for this tool, then call it in a later step.';

@@ -621,7 +621,10 @@ type EventBody =
     }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }
   | { type: "run_failed"; payload: { error: { code: string; message: string } } }
-  /** Model context and review records the timeline does not draw (kernel `events.ts`). */
+  /**
+   * Model context and review records the timeline does not draw (kernel `events.ts`); only a
+   * loopback port grant's `permission_reviewed` marks its call's row.
+   */
   | {
       type: "permission_context" | "permission_reviewed" | "plugin_context";
       payload: Record<string, unknown>;
