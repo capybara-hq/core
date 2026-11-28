@@ -219,6 +219,107 @@ export class RunQueue {
         trigger_seq: Number(conv.consumed_seq),
         job_id: jobId.recorded,
         compact: true,
+        compact_origin: "manual",
+      })
+      .execute();
+    return runId;
+  }
+
+  /**
+   * Starts an idle compact run (idle compaction spec §5.1), or returns null and never throws: the
+   * idle job calls it at fire time, and a refusal or a failure only means no idle compaction now
+   * (the next run's finish arms again). Under the conversation row lock (the one `ensureRun` and
+   * {@link startCompaction} take) it re-checks that the conversation, its org and its agent are
+   * live, that nothing but a run-less side-call `usage` (`isIdleNeutralEvent`, S1) was written
+   * after `armedSeq`, and that the conversation is not busy: no active run (queued, running or
+   * waiting), no unconsumed message, no queue head. The run is a `compact` run with
+   * `compact_origin = 'idle'`, run as the conversation's owner, its boundary the current
+   * `consumed_seq`, exactly as a manual one.
+   */
+  async startIdleCompaction(conversationId: string, armedSeq: number): Promise<string | null> {
+    try {
+      return await this.startIdleCompactionIn(conversationId, armedSeq);
+    } catch (err) {
+      this.log.warn("idle compaction run not started", { conversationId, err });
+      return null;
+    }
+  }
+
+  /** {@link startIdleCompaction}'s transaction: the re-checks, the run row and its owed job. */
+  // org-filter: the idle-compaction job's kernel-written conversation id (owed by the run finish
+  // that armed it), run in runJob under the job's org; the conversation's own org is read under its
+  // row lock
+  @Transactional({ propagation: "requires_new" })
+  private async startIdleCompactionIn(
+    conversationId: string,
+    armedSeq: number,
+  ): Promise<string | null> {
+    const t = this.db;
+    const conv = await t
+      .selectFrom("conversations")
+      .select(["org_id", "agent_id", "account_id", "kind", "consumed_seq", "deleted_at"])
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!conv || !isLive(conv.deleted_at) || conv.kind !== "chat") return null;
+    if (!(await orgIsLive(t, conv.org_id))) return null;
+    // stale: an event after the armed seq other than a run-less side-call usage (the predicate of
+    // isIdleNeutralEvent, in SQL)
+    const later = await t
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", conversationId)
+      .where("seq", ">", String(armedSeq))
+      .where((eb) => eb.not(eb.and([eb("type", "=", "usage"), eb("run_id", "is", null)])))
+      .limit(1)
+      .executeTakeFirst();
+    if (later) return null;
+    const active = await t
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conversationId)
+      .where("status", "in", ACTIVE_RUN_STATUSES)
+      .limit(1)
+      .executeTakeFirst();
+    if (active) return null;
+    const unconsumed = await t
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "user_message")
+      .where("seq", ">", conv.consumed_seq)
+      .limit(1)
+      .executeTakeFirst();
+    if (unconsumed) return null;
+    const head = await t
+      .selectFrom("conversation_queue")
+      .select("id")
+      .where("conversation_id", "=", conversationId)
+      .limit(1)
+      .executeTakeFirst();
+    if (head) return null;
+    const agent = await t
+      .selectFrom("agents")
+      .select(["current_version", "deleted_at"])
+      .where("id", "=", conv.agent_id)
+      .where("org_id", "=", conv.org_id)
+      .executeTakeFirst();
+    if (!agent || agent.deleted_at !== null) return null;
+    const jobId = await this.jobIdFor(conversationId, Number(conv.consumed_seq));
+    const runId = randomUUID();
+    if (!(await this.oweJob(conversationId, runId, jobId.id, "chat", conv.org_id))) return null;
+    await t
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conversationId,
+        status: "queued",
+        agent_version: agent.current_version,
+        trigger_account_id: conv.account_id,
+        trigger_seq: Number(conv.consumed_seq),
+        job_id: jobId.recorded,
+        compact: true,
+        compact_origin: "idle",
       })
       .execute();
     return runId;

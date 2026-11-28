@@ -173,8 +173,10 @@ export class RunFinish {
     }
     // the terminal status is committed first, then the tickets go (the one place runs end)
     afterCommit(() => this.gitRunEnd.onRunFinished(a.runId));
-    // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7)
-    if (a.status !== "completed") await pauseQueueIn(t, a.conversationId);
+    // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7);
+    // an idle compact run preempted by input does not (idle compaction spec §5.2, S3): the input
+    // that preempted it, a queued message among them, goes out next
+    if (a.status !== "completed" && !superseded(a.event)) await pauseQueueIn(t, a.conversationId);
     const seq = (ev as ConversationEvent).seq;
     // what arrived during the run starts the next one after the commit (the run worker's post-job
     // ensureRun); owed here too, for when that never happens (an eval's hidden conversation never
@@ -238,6 +240,12 @@ function personStopped(event: FinishRunArgs["event"]): boolean {
   if (event.type !== "run_aborted") return false;
   const p = event.payload as { byAccountId?: unknown; detail?: unknown } | undefined;
   return typeof p?.byAccountId === "string" && p.detail === undefined;
+}
+
+/** A `run_aborted` of an idle compact run preempted by input (idle compaction spec §5.2). */
+function superseded(event: FinishRunArgs["event"]): boolean {
+  if (event.type !== "run_aborted") return false;
+  return (event.payload as { reason?: unknown } | undefined)?.reason === "superseded";
 }
 
 /** The message of a `run_failed` event's error, for the task run (undefined otherwise). */
