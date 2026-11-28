@@ -607,7 +607,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   });
 
   it.each([
-    ["/admin/models?tab=purposes", "GET /api/v1/admin/models", 9],
+    ["/admin/models?tab=purposes", "GET /api/v1/admin/models", 10],
     ["/admin/plugins/sources", "GET /api/v1/admin/marketplaces", 0],
   ])(
     "%s: the loading page announces once (its sections inside one busy region)",
@@ -636,7 +636,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
-  it("/admin/models: the purposes load as the kernel's nine sections, in columns", async () => {
+  it("/admin/models: the purposes load as the kernel's ten sections, in columns", async () => {
     const { release } = await renderHeld(
       "/admin/models?tab=purposes",
       "GET /api/v1/admin/model-purposes",
@@ -645,7 +645,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
     });
     const sections = document.querySelectorAll<HTMLElement>(".cb-form-section");
-    expect(sections).toHaveLength(9);
+    expect(sections).toHaveLength(10);
     expect(formSectionLayout(sections[0] as HTMLElement)).toBe("columns");
     await release();
   });

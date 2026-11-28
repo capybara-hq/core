@@ -1,4 +1,4 @@
-import type { ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelRequest, ParamValue } from "@capybara-hq/plugin-sdk";
 import { renderBackgroundFinished } from "../../background/render.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import type { CompactionSettings } from "../../identity/settings.js";
@@ -157,6 +157,34 @@ export function compactionChunkSize(budget: number, maxOutputTokens: number): nu
  * transcript.
  */
 export const MIN_COMPACTION_CHUNK_TOKENS = 256;
+
+/**
+ * A compaction model is eligible only if one summary chunk of it holds at least this many tokens
+ * (compaction model spec §4.3): a smaller chunk would split a long transcript into many calls.
+ */
+export const MIN_COMPACTION_MODEL_CHUNK_TOKENS = 32_000;
+
+/**
+ * `Cmax` (compaction model spec §5.1): the summary cap is the setting bounded by the conversation
+ * model's output limit and, when a compaction model summarizes, by its output limit too. Omitting
+ * `summarizerMax` gives the cap of the conversation model alone; a large-output summarizer never
+ * raises it.
+ */
+export function compactionSummaryCap(
+  setting: number,
+  conversationMax: number,
+  summarizerMax?: number,
+): number {
+  return Math.min(setting, conversationMax, summarizerMax ?? Number.POSITIVE_INFINITY);
+}
+
+/** Compaction model spec §4.3: one chunk of the model's input budget reaches the floor. */
+export function compactionModelEligible(window: number, cap: number, reserve: number): boolean {
+  return (
+    compactionChunkSize(compactionInputBudget(window, cap, reserve), cap) >=
+    MIN_COMPACTION_MODEL_CHUNK_TOKENS
+  );
+}
 
 /**
  * Compaction trigger (context compaction spec §4.1): the calibrated estimate reaches the lower of
@@ -750,13 +778,15 @@ function splitLine(line: string, max: number): string[] {
  * which the caller narrows to the model's own cap (context compaction spec §4.8); omitted, it is
  * the built-in default. `retry` is the one retry after a call stopped at the output token limit:
  * the same request with {@link compactionRetryNote} after the transcript (the cut-off answer is not
- * sent back, so the request stays inside the same input budget).
+ * sent back, so the request stays inside the same input budget). `params` are the summarizer's
+ * request parameters: a compaction model's mapping, sanitized against its declarations (compaction
+ * model spec §4.5); the conversation model summarizes with none (`{}`, the default).
  */
 export function buildCompactionRequest(
   transcript: string,
   model: string,
   maxOutputTokens: number = COMPACTION_MAX_OUTPUT_TOKENS,
-  opts: { retry?: boolean } = {},
+  opts: { retry?: boolean; params?: Record<string, ParamValue> } = {},
 ): ModelRequest {
   return {
     model,
@@ -774,7 +804,7 @@ export function buildCompactionRequest(
     ],
     tools: [],
     maxOutputTokens,
-    params: {},
+    params: opts.params ?? {},
     purpose: "compaction",
   };
 }

@@ -201,6 +201,33 @@ describe("prompt suggestion job", () => {
     expect(await suggestionUsage(id)).toHaveLength(1);
   });
 
+  it("the usage event keeps the provider's per-lifetime cache write split", async () => {
+    const { id } = await completedRun("hello");
+    const runId = crypto.randomUUID();
+    const written = await k.app.get(PromptSuggestionGenerator).writeUsage(id, runId, {
+      provider: "model-fake",
+      model: "fake-1",
+      usage: {
+        inputTokens: 6,
+        outputTokens: 20,
+        cacheReadTokens: 100,
+        cacheWriteTokens: 300,
+        cacheWriteByTtl: [
+          { ttl: 300, tokens: 100 },
+          { ttl: 3600, tokens: 200 },
+        ],
+      },
+    });
+    expect(written?.payload).toMatchObject({
+      purpose: "suggestion",
+      cacheWriteTokens: 300,
+      cacheWriteByTtl: [
+        { ttl: 300, tokens: 100 },
+        { ttl: 3600, tokens: 200 },
+      ],
+    });
+  });
+
   it("max_duration and budget outcomes never enqueue", async () => {
     const { id, runId } = await completedRun("echo:hello");
     // the completed run's own job may be in flight: count only the calls below

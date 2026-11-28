@@ -105,6 +105,8 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "device.network_allowed": "deviceNetworkAllowed",
   "device.network_changed": "deviceNetworkChanged",
   "device.network_denied": "deviceNetworkDenied",
+  "device.loopback_granted": "deviceLoopbackGranted",
+  "device.loopback_revoked": "deviceLoopbackRevoked",
   "device.policy_changed": "devicePolicyChanged",
   "device.policy_failed": "devicePolicyFailed",
   "device.policy_requested": "devicePolicyRequested",

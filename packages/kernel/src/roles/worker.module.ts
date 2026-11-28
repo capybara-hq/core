@@ -47,6 +47,7 @@ import { RuntimeWorkersModule } from "../runtime/run-processors.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxSweepJobs } from "../sandbox/jobs.js";
+import { LoopbackExpiryJob } from "../sandbox/loopback-expiry.job.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { ShareObjectsModule } from "../shares/share-objects.js";
 import { ShareSweepJob } from "../shares/sweep.job.js";
@@ -138,6 +139,8 @@ export class WorkerModule {
         BackgroundTaskPollJob,
         // owed conversation notices to devices' services (close tabs on delete design §4.3)
         ConversationNoticeSweepJob,
+        // loopback port grants past their 24 hours (browser loopback port grants design §4)
+        LoopbackExpiryJob,
         // legacy retirement (permission runtime cutover 8.5): bounded, retryable; the sandbox
         // service's inline gate holds without it
         RetireLegacyTasksJob,

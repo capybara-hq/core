@@ -13,6 +13,8 @@ import { DeviceReportsModule } from "./device-reports.module.js";
 import { DeviceServices } from "./device-services.js";
 import { SandboxJobs } from "./jobs.js";
 import { LegacyRetirementModule } from "./legacy-retirement.module.js";
+import { LoopbackGrantLock, LoopbackGrants } from "./loopback-grants.js";
+import { LoopbackLivePorts } from "./loopback-live-ports.js";
 import { OperationAuthorityModule } from "./operation-authority.module.js";
 import { OperationIntentsModule } from "./operation-intents.module.js";
 import { PermissionAuthorityModule } from "./permission-authority.module.js";
@@ -25,7 +27,7 @@ import { SandboxService } from "./sandbox.service.js";
  * Sandboxes: the one {@link SandboxService} (a device's file system and instance over the
  * `device-provider@1` provider, with the shared / exclusive leases of {@link SandboxLeases}), the review
  * every command passes in auto mode ({@link CommandReviewService}), device services
- * ({@link DeviceServices}), and the producer of the
+ * ({@link DeviceServices}) with their loopback port grants ({@link LoopbackGrants}), and the producer of the
  * one-off `sandbox-destroy-for` jobs (`MaintenanceProcessor` consumes them). The sweeps
  * (`SandboxSweepJobs`) are the worker role's (`WorkerModule`).
  */
@@ -51,13 +53,22 @@ import { SandboxService } from "./sandbox.service.js";
     StepLogModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
-  providers: [SandboxService, SandboxJobs, CommandReviewService, DeviceServices],
+  providers: [
+    SandboxService,
+    SandboxJobs,
+    CommandReviewService,
+    DeviceServices,
+    LoopbackLivePorts,
+    LoopbackGrantLock,
+    LoopbackGrants,
+  ],
   exports: [
     SandboxProviderRegistryModule,
     LegacyRetirementModule,
     PermissionAuthorityModule,
     SandboxService,
     DeviceServices,
+    LoopbackGrants,
     OperationIntentsModule,
     OperationAuthorityModule,
     SandboxJobs,

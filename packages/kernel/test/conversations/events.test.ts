@@ -206,6 +206,29 @@ describe("compaction_summary", () => {
   });
 });
 
+describe("compaction model field", () => {
+  const summary = (model?: unknown) =>
+    ConversationEventSchema.safeParse({
+      type: "compaction_summary",
+      payload: { coversUpToSeq: 4, text: "s", savedTokens: 0, step: 0, model },
+    }).success;
+  const failed = (model?: unknown) =>
+    ConversationEventSchema.safeParse({
+      type: "compaction_failed",
+      payload: { attempt: 1, reason: "r", step: 0, model },
+    }).success;
+
+  it("compaction_summary and compaction_failed parse with and without model", () => {
+    const ref = { provider: "p", model: "m" };
+    expect([summary(ref), summary(), failed(ref), failed()]).toEqual([true, true, true, true]);
+  });
+
+  it("a model without its model name fails", () => {
+    expect(summary({ provider: "p" })).toBe(false);
+    expect(failed({ provider: "p" })).toBe(false);
+  });
+});
+
 describe("project_root", () => {
   const event = (payload: Record<string, unknown>) =>
     ConversationEventSchema.safeParse({ type: "project_root", payload });

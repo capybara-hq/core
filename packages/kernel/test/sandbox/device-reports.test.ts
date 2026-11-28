@@ -530,7 +530,12 @@ describe("the report revision and the device authority epoch", () => {
     const escalated = await seedIntent(id, { escalated: true });
     const sandboxed = await seedIntent(id, { escalated: false, hosts: ["example.com"] });
     answer = async () => report("r2");
-    supportAnswer = async () => ({ ...FAKE_PERMISSION_SUPPORT, outsideSandbox: false });
+    // loopback ports need outsideSandbox (the SDK's parse refuses one without the other)
+    supportAnswer = async () => ({
+      ...FAKE_PERMISSION_SUPPORT,
+      network: { ...FAKE_PERMISSION_SUPPORT.network, loopbackPorts: false },
+      outsideSandbox: false,
+    });
     expect(await reports.changed("device-fake", id)).toBe("bumped");
     expect(await intentState(escalated)).toBe("revoked");
     // per-call hosts are still enforceable: the sandboxed work keeps running

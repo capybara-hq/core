@@ -104,8 +104,11 @@ export interface ReviewRecord {
    * by itself (approval-only profiles design). Absent on a denial.
    */
   decisionSource?: "scope" | "human" | "review-model" | "full-access" | "task-grant";
-  /** The boundary crossing the allow covered (absent when the call crossed nothing). */
-  crossing?: "directory" | "host" | "outside-sandbox" | "sensitive";
+  /**
+   * The boundary crossing the allow covered (absent when the call crossed nothing); a loopback
+   * port grant is recorded by its own review event, never shown on the row.
+   */
+  crossing?: "directory" | "host" | "outside-sandbox" | "sensitive" | "loopback-port";
 }
 
 /**
@@ -432,6 +435,8 @@ type EventBody =
         policy?: ApprovalPolicy;
         /** A network ask: the device-layer hosts asked for (display only). */
         network?: { hosts: string[] };
+        /** A loopback port ask: the service, the port and whether it is a database port. */
+        loopback?: { service: string; port: number; database: boolean };
         /** A command review ask: what is held and why (display only). */
         command?: CommandAsk;
         /** A secure input request: what the values are for and the field paths (never a value). */
@@ -616,7 +621,10 @@ type EventBody =
     }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }
   | { type: "run_failed"; payload: { error: { code: string; message: string } } }
-  /** Model context and review records the timeline does not draw (kernel `events.ts`). */
+  /**
+   * Model context and review records the timeline does not draw (kernel `events.ts`); only a
+   * loopback port grant's `permission_reviewed` marks its call's row.
+   */
   | {
       type: "permission_context" | "permission_reviewed" | "plugin_context";
       payload: Record<string, unknown>;

@@ -69,9 +69,12 @@ export interface ExtensionPermissions {
    * `ctx.deviceAccess`: services this extension runs in the conversation's device and reaches
    * through requests and viewer streams. `services` lists 1 to
    * {@link DEVICE_ACCESS_MAX_SERVICES} service names ({@link DEVICE_SERVICE_NAME_RE}); a service
-   * not listed is refused. Any extension may declare it (no `provides` needed).
+   * not listed is refused. Any extension may declare it (no `provides` needed). `loopbackPorts`:
+   * the extension's services may be granted exact loopback ports of the device
+   * (`ctx.deviceAccess.grantLoopbackPort`, and the loopback ask raised from `reportBlockedHosts`);
+   * without it a loopback refusal only gets a note.
    */
-  deviceAccess?: { services: string[] };
+  deviceAccess?: { services: string[]; loopbackPorts?: boolean };
   /**
    * `ctx.triggers`: the event types this extension may emit (at most {@link TRIGGER_MAX_TYPES},
    * each matching {@link TRIGGER_TYPE_RE}). An emit of another type is refused.
@@ -352,8 +355,13 @@ export function validatePermissions(
     }
   }
   if (p.deviceAccess !== undefined) {
-    if (!isObj(p.deviceAccess) || Object.keys(p.deviceAccess).some((k) => k !== "services")) {
-      errs.push("permissions.deviceAccess must be { services: string[] }");
+    if (
+      !isObj(p.deviceAccess) ||
+      Object.keys(p.deviceAccess).some((k) => k !== "services" && k !== "loopbackPorts") ||
+      (p.deviceAccess.loopbackPorts !== undefined &&
+        typeof p.deviceAccess.loopbackPorts !== "boolean")
+    ) {
+      errs.push("permissions.deviceAccess must be { services: string[], loopbackPorts?: boolean }");
     } else {
       const names = strList("permissions.deviceAccess.services", p.deviceAccess.services, errs);
       if (Array.isArray(p.deviceAccess.services)) {

@@ -34,9 +34,16 @@ export type ToolNotice = "not_loaded" | "reconciling";
 
 /**
  * The kind of a boundary crossing Auto granted by itself (§6.16.9): a directory outside the
- * scope, a new host on an allowlist, one call run outside the sandbox, or a sensitive command.
+ * scope, a new host on an allowlist, one call run outside the sandbox, a sensitive command, or a
+ * port of the person's own device opened to a device service for the conversation (a loopback
+ * port grant, made by Full access or the review model).
  */
-export type ToolAutoGranted = "directory" | "host" | "outside-sandbox" | "sensitive";
+export type ToolAutoGranted =
+  | "directory"
+  | "host"
+  | "outside-sandbox"
+  | "sensitive"
+  | "loopback-port";
 
 /**
  * What a call waits for (§6.16.9): a person's approval, answer or connection, or `watch`, a
