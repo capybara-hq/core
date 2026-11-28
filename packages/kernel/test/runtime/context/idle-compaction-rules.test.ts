@@ -59,6 +59,7 @@ function armFacts(over: Partial<IdleArmFacts> = {}): IdleArmFacts {
       output: 1_000,
     },
     inContextAllowed: true,
+    fitPlan: false,
     settled: true,
     ...over,
   };
@@ -106,6 +107,7 @@ describe("idleArmDecision", () => {
       },
     ],
     ["quality_gate", { inContextAllowed: false }],
+    ["fit_plan", { fitPlan: true }],
     ["unsettled", { settled: false }],
   ];
   it.each(skips)("skips with %s", (reason, over) => {

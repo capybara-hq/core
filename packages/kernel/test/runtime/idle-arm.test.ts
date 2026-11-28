@@ -9,6 +9,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
+import type { IdleArmSkip } from "../../src/runtime/context/idle-compaction-rules.js";
 import { IdleArm } from "../../src/runtime/idle-arm.js";
 import {
   IDLE_COMPACTION_JOB,
@@ -16,6 +17,8 @@ import {
 } from "../../src/runtime/idle-compaction-jobs.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { ExecutionRevoked } from "../../src/runtime/run-execution.js";
+import { type IdleCompactionIntent, RunFinish } from "../../src/runtime/run-finish.js";
 import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -182,18 +185,85 @@ const idleRows = () =>
     .where("job_name", "=", IDLE_COMPACTION_JOB)
     .execute();
 
-/** Runs one long turn on a fresh conversation and expects no idle compaction job owed. */
+/** The reasons `IdleArm` logged a skip for, in order (its debug log, from now on). */
+function skipReasons(): () => IdleArmSkip[] {
+  const log = (k.app.get(IdleArm) as unknown as { log: { debug: (...a: unknown[]) => void } }).log;
+  const debug = vi.spyOn(log, "debug");
+  return () =>
+    debug.mock.calls
+      .filter(([msg]) => msg === "idle compaction not armed")
+      .map(([, meta]) => (meta as { reason: IdleArmSkip }).reason);
+}
+
+/**
+ * Runs one long turn on a fresh conversation and expects no idle compaction job owed, skipped for
+ * `reason` (undefined: the decision failed and logged no skip).
+ */
 async function expectNotArmed(
+  reason: IdleArmSkip | undefined,
   opts: { model?: string; settings?: Record<string, unknown>; long?: boolean; text?: string } = {},
-  before?: (orgId: string, conv: string) => Promise<void>,
 ): Promise<ConversationEvent[]> {
   const { orgId, conv } = await setup(opts.model, opts.settings);
   if (opts.long !== false) await seedLongHistory(orgId, conv);
-  await before?.(orgId, conv);
+  const reasons = skipReasons();
   const events = await turn(orgId, conv, opts.text ?? "echo:ok");
   expect(events.filter((e) => e.type === "run_finished")).toHaveLength(1);
   expect(await idleRows()).toEqual([]);
+  expect(reasons()).toEqual(reason === undefined ? [] : [reason]);
+  vi.restoreAllMocks();
   return events;
+}
+
+/** The conversation row `IdleArm.decide` takes. */
+const convRowOf = (conv: string) =>
+  db
+    .selectFrom("conversations")
+    .select(["id", "org_id", "kind", "account_id"])
+    .where("id", "=", conv)
+    .executeTakeFirstOrThrow();
+
+/**
+ * Runs one long turn whose arm decision passes, doing `between` after the decision and before the
+ * terminal transaction; resolves with how the worker's `RunFinish.finish` settled.
+ */
+async function finishAfter(between: (runId: string, conv: string) => Promise<void>): Promise<{
+  orgId: string;
+  conv: string;
+  runId: string;
+  intent: IdleCompactionIntent;
+  finished: PromiseSettledResult<number | null>;
+}> {
+  const { orgId, conv } = await setup();
+  await seedLongHistory(orgId, conv);
+  const arm = k.app.get(IdleArm);
+  const decide = arm.decide.bind(arm);
+  const intents: (IdleCompactionIntent | undefined)[] = [];
+  let runId = "";
+  vi.spyOn(arm, "decide").mockImplementation(async (run, c, outcome) => {
+    const intent = await decide(run, c, outcome);
+    intents.push(intent);
+    runId = run.id;
+    await between(run.id, c.id);
+    return intent;
+  });
+  const finisher = k.app.get(RunFinish);
+  const finish = finisher.finish.bind(finisher);
+  const settled = new Promise<PromiseSettledResult<number | null>>((resolve) => {
+    vi.spyOn(finisher, "finish").mockImplementation((a) => {
+      const r = finish(a);
+      r.then(
+        (value) => resolve({ status: "fulfilled", value }),
+        (reason: unknown) => resolve({ status: "rejected", reason }),
+      );
+      return r;
+    });
+  });
+  await postMessage(owner, orgId, conv, "echo:ok");
+  const finished = await settled;
+  vi.restoreAllMocks();
+  // the decision itself armed: only the terminal transaction can have dropped the row
+  expect(intents).toEqual([expect.objectContaining({ orgId })]);
+  return { orgId, conv, runId, intent: intents[0] as IdleCompactionIntent, finished };
 }
 
 describe("arming idle compaction at a run's finish", () => {
@@ -235,15 +305,15 @@ describe("arming idle compaction at a run's finish", () => {
   });
 
   it("owes nothing with the 5-minute default tier (longTtl off)", async () => {
-    await expectNotArmed({ settings: { promptCache: { longTtl: false } } });
+    await expectNotArmed("short_ttl", { settings: { promptCache: { longTtl: false } } });
   });
 
   it("owes nothing on a model that declares no cache", async () => {
-    await expectNotArmed({ model: "fake-nc" });
+    await expectNotArmed("no_cache", { model: "fake-nc" });
   });
 
   it("owes nothing for a context under the size threshold", async () => {
-    await expectNotArmed({ long: false });
+    await expectNotArmed("small", { long: false });
   });
 
   it("owes nothing for an automation's run (a scheduled task, an event automation)", async () => {
@@ -254,7 +324,7 @@ describe("arming idle compaction at a run's finish", () => {
           SET payload = jsonb_set(payload, '{trigger}', to_jsonb(${trigger}::text))
           WHERE run_id = ${runId} AND type = 'run_started'`.execute(raw);
       };
-      await expectNotArmed();
+      await expectNotArmed("trigger");
     }
   });
 
@@ -266,15 +336,16 @@ describe("arming idle compaction at a run's finish", () => {
         .where("id", "=", runId)
         .execute();
     };
-    await expectNotArmed();
+    await expectNotArmed("automation");
   });
 
   it("owes nothing when the org turned idle compaction or compaction off", async () => {
-    await expectNotArmed({
-      settings: { compaction: { idleEnabled: false, idleMinTokensFloor: 50_000 } },
+    const lowFloor = { idleMinTokensFloor: 50_000, idleMinWindowRatio: 0.1 };
+    await expectNotArmed("disabled", {
+      settings: { compaction: { ...lowFloor, idleEnabled: false } },
     });
-    await expectNotArmed({
-      settings: { compaction: { enabled: false, idleMinTokensFloor: 50_000 } },
+    await expectNotArmed("disabled", {
+      settings: { compaction: { ...lowFloor, enabled: false } },
     });
   });
 
@@ -285,7 +356,7 @@ describe("arming idle compaction at a run's finish", () => {
       payload: { idleCompaction: "off" },
     });
     expect(res.statusCode, res.body).toBe(200);
-    await expectNotArmed();
+    await expectNotArmed("personal_off");
   });
 
   it("a max_steps run whose wrap-up answered its tool result arms; an unanswered tool result after the reply does not (S7)", async () => {
@@ -302,11 +373,7 @@ describe("arming idle compaction at a run's finish", () => {
 
     // the same decision with a tool result after the last reply: unsettled, no intent
     const runId = finished?.runId as string;
-    const convRow = await db
-      .selectFrom("conversations")
-      .select(["id", "org_id", "kind", "account_id"])
-      .where("id", "=", conv)
-      .executeTakeFirstOrThrow();
+    const convRow = await convRowOf(conv);
     const decide = () =>
       withOrgScope(orgId, () => k.app.get(IdleArm).decide({ id: runId }, convRow, "max_steps"));
     expect(await decide()).toMatchObject({ orgId, runAt: expect.any(Number) });
@@ -340,10 +407,62 @@ describe("arming idle compaction at a run's finish", () => {
       }
       return resolve(...args);
     });
-    const events = await expectNotArmed();
+    const events = await expectNotArmed(undefined);
     expect(events.find((e) => e.type === "run_finished")?.payload).toMatchObject({
       reason: "completed",
     });
     expect(armReads).toBeGreaterThan(0);
+  });
+
+  it("owes nothing when the last call's request recorded a fit plan (S7)", async () => {
+    const { orgId, conv } = await setup();
+    await seedLongHistory(orgId, conv);
+    const events = await turn(orgId, conv, "echo:ok");
+    const runId = events.find((e) => e.type === "run_finished")?.runId as string;
+    const convRow = await convRowOf(conv);
+    const decide = () =>
+      withOrgScope(orgId, () => k.app.get(IdleArm).decide({ id: runId }, convRow, "completed"));
+    expect(await decide()).toMatchObject({ orgId });
+    // the in-context build at fire time skips a call whose request carries a fit plan
+    await sql`UPDATE capybara.conversation_events
+      SET payload = jsonb_set(payload, '{request,fit}', '{"dropped":1}'::jsonb)
+      WHERE run_id = ${runId} AND type = 'model_call'`.execute(raw);
+    const reasons = skipReasons();
+    expect(await decide()).toBeUndefined();
+    expect(reasons()).toEqual(["fit_plan"]);
+  });
+
+  it("owes nothing when the run was already terminal at its finish", async () => {
+    const { finished } = await finishAfter(async (runId) => {
+      await db.updateTable("runs").set({ status: "completed" }).where("id", "=", runId).execute();
+    });
+    expect(finished).toEqual({ status: "fulfilled", value: null });
+    expect(await idleRows()).toEqual([]);
+  });
+
+  it("owes nothing when the conversation was deleted between the decision and the finish", async () => {
+    const { orgId, conv, runId, intent, finished } = await finishAfter(async (_runId, c) => {
+      await db
+        .updateTable("conversations")
+        .set({ deleted_at: new Date() })
+        .where("id", "=", c)
+        .execute();
+    });
+    // the worker's execution no longer holds a live conversation: it writes nothing
+    expect(finished).toMatchObject({ status: "rejected", reason: expect.any(ExecutionRevoked) });
+    expect(await idleRows()).toEqual([]);
+    // the terminal transaction itself, with the armed intent: it ends the run, owes no job
+    const seq = await withOrgScope(orgId, () =>
+      k.app.get(RunFinish).finish({
+        conversationId: conv,
+        runId,
+        status: "completed",
+        consumed: null,
+        event: { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 0 } },
+        idleCompaction: intent,
+      }),
+    );
+    expect(seq).toEqual(expect.any(Number));
+    expect(await idleRows()).toEqual([]);
   });
 });

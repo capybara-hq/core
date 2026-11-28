@@ -51,6 +51,7 @@ const PASSING: IdleArmFacts = {
     output: 0,
   },
   inContextAllowed: true,
+  fitPlan: false,
   settled: true,
 };
 
@@ -223,6 +224,8 @@ export class IdleArm {
 
     // S7: the in-context quality gate (ruling R8) and the settled point (ruling R9)
     known.inContextAllowed = inContextSummaryAllowed(last.call.payload.provider, lastInfo.id);
+    // a fit plan reshaped the last request's prefix: the fire-time in-context build skips it
+    known.fitPlan = last.call.payload.request.fit !== undefined;
     reason = failing();
     if (reason !== undefined) return skip(reason);
 

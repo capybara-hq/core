@@ -1026,6 +1026,9 @@ export class RunWorker {
           const consumed = Math.max(outcome.consumedUpToSeq, startConsumed);
           // idle compaction spec §4.2 (S4): decided before the terminal transaction, never throws
           const idleCompaction = await this.idleArm.decide(run, conv, outcome.kind);
+          // decide awaited (possibly the model registry): the lease may have gone meanwhile
+          if (state.abandoned) return "abandoned";
+          if (state.leaseLost) return "interrupted";
           await this.finish(
             conversationId,
             runId,
@@ -1044,6 +1047,9 @@ export class RunWorker {
           // floor to it
           const consumed = Math.max(outcome.consumedUpToSeq, Number(run.trigger_seq));
           const idleCompaction = await this.idleArm.decide(run, conv, outcome.kind);
+          // decide awaited (possibly the model registry): the lease may have gone meanwhile
+          if (state.abandoned) return "abandoned";
+          if (state.leaseLost) return "interrupted";
           await this.finish(
             conversationId,
             runId,

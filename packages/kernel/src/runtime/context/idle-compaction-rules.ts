@@ -39,6 +39,7 @@ export type IdleArmSkip =
   | "short_ttl"
   | "small"
   | "quality_gate"
+  | "fit_plan"
   | "unsettled";
 
 export interface IdleArmFacts {
@@ -65,6 +66,11 @@ export interface IdleArmFacts {
   } | null;
   /** `inContextSummaryAllowed(provider, model)` (S7). */
   inContextAllowed: boolean;
+  /**
+   * The last step call's request recorded a fit plan: its prefix is not the plain history, so an
+   * in-context summary cannot reuse it (the fire-time build skips it as `fit_plan`, S7).
+   */
+  fitPlan: boolean;
   /** No unanswered tool results after the last reply at the run's end (S7). */
   settled: boolean;
 }
@@ -95,6 +101,7 @@ export function idleArmDecision(
     return { arm: false, reason: "small" };
   }
   if (!f.inContextAllowed) return { arm: false, reason: "quality_gate" };
+  if (f.fitPlan) return { arm: false, reason: "fit_plan" };
   if (!f.settled) return { arm: false, reason: "unsettled" };
   return {
     arm: true,
