@@ -13,8 +13,9 @@ import {
   type LexicalEditor,
 } from "lexical";
 import { act } from "react";
-import type { ComposerSegment } from "../conversation/composer-editor/segments";
+import type { ComposerSegment, ComposerTokenData } from "../conversation/composer-editor/segments";
 import { $plainWithCaret, $readSegments } from "../conversation/composer-editor/segments";
+import { $createTokenNode } from "../conversation/composer-editor/token-node";
 
 /**
  * Runs `fn` inside React's `act`, in an act environment for the call (as Testing Library's own
@@ -118,5 +119,25 @@ export function flushComposer(box: HTMLElement): void {
   const editor = editorOf(box);
   run(() => {
     editor.update(() => {}, { discrete: true });
+  });
+}
+
+/**
+ * Puts `tokens` at the end of the draft as they are, a space after each (a draft the menus would
+ * take many picks to build: a test of the caps).
+ */
+export function appendComposerTokens(box: HTMLElement, tokens: ComposerTokenData[]): void {
+  const editor = editorOf(box);
+  run(() => {
+    editor.update(
+      () => {
+        for (const t of tokens) {
+          const s = $getRoot().selectEnd();
+          s.insertNodes([$createTokenNode(t)]);
+          $getRoot().selectEnd().insertText(" ");
+        }
+      },
+      { discrete: true },
+    );
   });
 }

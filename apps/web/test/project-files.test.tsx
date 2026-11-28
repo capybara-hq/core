@@ -140,6 +140,10 @@ const refusalLine = () =>
       (c) => c.getAttribute("data-tone") === "fail",
     );
     if (!el) throw new Error("no refusal line");
+    // the editor draws the restored draft's tokens after the line (it applies a draft the page
+    // sets in an effect, then renders its tokens): wait for a refused token too
+    if (!document.querySelector('[data-part="inline-token"][data-state="refused"]'))
+      throw new Error("no refused token drawn yet");
     return el as HTMLElement;
   });
 const posted = (calls: Call[]) =>

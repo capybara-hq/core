@@ -203,6 +203,10 @@ export function UserBubble({
               data-part="bubble-body"
               data-expanded={expanded ? "true" : "false"}
               data-overflows={overflows && !expanded ? "true" : undefined}
+              // a token tabbed into below the clamp opens the message, so it shows with its ring
+              onFocusCapture={() => {
+                if (overflows && !expanded) setExpanded(true);
+              }}
             >
               {skill !== undefined ? <BubbleSkill label={skill} /> : null}
               {segments

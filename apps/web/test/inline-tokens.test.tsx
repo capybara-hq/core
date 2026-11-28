@@ -10,6 +10,7 @@ import type { ConversationEvent, FirstMessageRequest } from "../src/lib/conversa
 import { personText } from "../src/lib/timeline";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
+  appendTokens,
   composerTokens,
   draftText,
   findComposerBox,
@@ -328,6 +329,10 @@ describe("composer tokens", () => {
           (c) => c.getAttribute("data-tone") === "fail",
         );
         if (!el) throw new Error("no refusal line");
+        // the editor draws the restored draft's tokens after the line (it applies a draft the page
+        // sets in an effect, then renders its tokens): wait for a refused token too
+        if (!document.querySelector('[data-part="inline-token"][data-state="refused"]'))
+          throw new Error("no refused token drawn yet");
         return el as HTMLElement;
       });
       expect(line.textContent).toContain(
@@ -497,6 +502,47 @@ describe("composer review fixes", () => {
     expect(
       ids(err("device.path_outside_project", [{ path: `${longPath.slice(0, 200)}…` }])),
     ).toEqual([longPath]);
+  });
+
+  it("the 20-token cap counts every occurrence: a repeat of a token in the draft is refused", async () => {
+    chatApi({
+      [`GET ${ORG}/files`]: () =>
+        json(200, {
+          files: [
+            {
+              id: "lf1",
+              name: "report.pdf",
+              contentType: "application/pdf",
+              size: 1,
+              origin: "upload",
+              agentId: null,
+              sourceConversation: null,
+              versions: 1,
+              createdAt: "2026-11-24T08:00:00Z",
+              previewable: null,
+            },
+          ],
+          next: null,
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    await findComposerBox();
+    // 20 distinct entities: 19 project files and the library file the menu offers again
+    appendTokens([
+      ...Array.from({ length: 19 }, (_, i) => ({
+        kind: "projectFile" as const,
+        id: `f${i}.ts`,
+        label: `f${i}.ts`,
+      })),
+      { kind: "file" as const, id: "lf1", label: "report.pdf" },
+    ]);
+    expect(composerTokens()).toHaveLength(20);
+    typeComposer("@");
+    const el = await menu();
+    await userEvent.setup().click(await within(el).findByRole("option", { name: /report\.pdf/ }));
+    await screen.findByText(en.chat.tokenTotalLimit.replace("{max}", "20"));
+    expect(composerTokens()).toHaveLength(20);
   });
 
   it("uploads count the draft's library file tokens toward the per-message cap", async () => {

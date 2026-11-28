@@ -5,6 +5,7 @@
  * DOM key events.
  */
 import {
+  appendComposerTokens,
   backspaceInComposer,
   composerSegments,
   composerText,
@@ -32,6 +33,12 @@ export function typeComposer(text: string, box: HTMLElement = composerBox()): vo
   if (!box.contains(document.activeElement)) focusComposerEnd(box);
   typeInComposer(box, text);
 }
+
+/** Appends tokens to the draft as they are (a draft the menus would take many picks to build). */
+export const appendTokens = (
+  tokens: Parameters<typeof appendComposerTokens>[1],
+  box: HTMLElement = composerBox(),
+): void => appendComposerTokens(box, tokens);
 
 /** The draft as the person reads it (tokens by their labels). */
 export const draftText = (box: HTMLElement = composerBox()): string => composerText(box);

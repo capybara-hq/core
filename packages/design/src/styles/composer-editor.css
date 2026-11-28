@@ -125,8 +125,9 @@
 .cb-inline-token-link > .cb-inline-token {
   cursor: pointer;
 }
-.cb-inline-token-link:hover > .cb-inline-token {
-  background: var(--cb-hover);
+/* hover keeps the token's ground and underlines its label, as a link does */
+.cb-inline-token-link:hover .cb-inline-token-label {
+  text-decoration: underline;
 }
 /* The skill token: an action, not a reference: `accent-tint` ground, mono `accent` label. */
 .cb-inline-token[data-kind="skill"] {

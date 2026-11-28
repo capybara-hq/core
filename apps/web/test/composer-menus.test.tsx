@@ -797,6 +797,10 @@ describe("the @ menu's library files", () => {
         (c) => c.getAttribute("data-tone") === "fail",
       );
       if (!el) throw new Error("no refusal line");
+      // the editor draws the restored draft's tokens after the line (it applies a draft the page
+      // sets in an effect, then renders its tokens): wait for a refused token too
+      if (!document.querySelector('[data-part="inline-token"][data-state="refused"]'))
+        throw new Error("no refused token drawn yet");
       return el as HTMLElement;
     });
     expect(line.textContent).toContain(`report.pdf can't be used: ${en.errors.file.not_found}`);

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -153,6 +153,21 @@ describe("UserBubble (§6.16.6)", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
     // a token without an action stays a mark, never a control
     expect(container.querySelectorAll('[data-part="inline-token-link"]')).toHaveLength(2);
+  });
+
+  it("a clamped message opens when the focus enters one of its tokens", () => {
+    const conv = { kind: "conversation" as const, id: "c2", label: "Pricing" };
+    const { container } = wrap(
+      <UserBubble
+        referenceLong
+        segments={["long ", conv]}
+        tokenAction={(t) => ({ href: `/chat/${t.id}` })}
+      />,
+    );
+    const body = container.querySelector('[data-part="bubble-body"]') as HTMLElement;
+    expect(body.getAttribute("data-expanded")).toBe("false");
+    act(() => screen.getByRole("link", { name: "会话：Pricing" }).focus());
+    expect(body.getAttribute("data-expanded")).toBe("true");
   });
 
   it("token names read in line order", () => {

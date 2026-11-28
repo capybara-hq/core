@@ -145,6 +145,10 @@ function distinctTokens(segments: readonly ComposerSegment[], kind?: ComposerTok
   ).size;
 }
 
+/** The draft's tokens as the send body counts them: every occurrence but the skill's. */
+const tokenCount = (segments: readonly ComposerSegment[]): number =>
+  segments.filter((s) => isToken(s) && s.kind !== "skill").length;
+
 /** The draft holds no text (whitespace aside) and no token. */
 const blank = (segments: readonly ComposerSegment[]) =>
   segments.every((s) => typeof s === "string" && s.trim() === "");
@@ -1031,15 +1035,16 @@ export function ComposerBar({
   function insert(token: ComposerTokenData) {
     const cur = segmentsNow.current.filter(isToken);
     const already = cur.some((x) => x.kind === token.kind && x.id === token.id);
+    // the kernel caps the tokens array itself (one marker each): a repeat counts too
+    if (token.kind !== "skill" && tokenCount(segmentsNow.current) >= MAX_TOKENS) {
+      toast.error(t("tokenTotalLimit", { max: MAX_TOKENS }));
+      return;
+    }
     if (!already && token.kind !== "skill") {
       const cap = MAX_OF_KIND[token.kind];
       const ofKind = distinctTokens(segmentsNow.current, token.kind);
       if (cap !== undefined && ofKind >= cap) {
         toast.error(t("tokenLimit", { max: cap }));
-        return;
-      }
-      if (distinctTokens(segmentsNow.current) >= MAX_TOKENS) {
-        toast.error(t("tokenTotalLimit", { max: MAX_TOKENS }));
         return;
       }
       // file tokens and uploads share the per-message file cap
@@ -1072,6 +1077,8 @@ export function ComposerBar({
       // where the `/` and its query stood; the rest of the draft stays
       editor.current?.insertText(r.text);
       setArgsFor(null);
+      // the arguments dialog had the focus: the text box takes it back (never on touch)
+      refocus();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -1897,7 +1904,7 @@ export function ComposerBar({
             dismissSuggestion();
             // each picked path not in the draft yet becomes a token at the caret
             const kindRoom = MAX_PROJECT_FILES - new Set(projectTokens).size;
-            const totalRoom = MAX_TOKENS - distinctTokens(segmentsNow.current);
+            const totalRoom = MAX_TOKENS - tokenCount(segmentsNow.current);
             const room = Math.max(Math.min(kindRoom, totalRoom), 0);
             const fresh = [...new Set(paths)].filter((p) => !projectTokens.includes(p));
             for (const path of fresh.slice(0, room))
