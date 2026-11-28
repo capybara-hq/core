@@ -66,6 +66,10 @@ export const ACCEPTED: string[] = [
   "file-preview",
   "subagent-group",
   "title-bar",
+  // composer menus phase B added states `place`, `place-locked`, `place-medium`, `compact-place`
+  // and `compact-place-sheet` (the top strip and control row, §6.16): accepted side by side in the
+  // Playwright Linux image with medium (720) and expanded (1280) window shots; the reference PNGs
+  // wait for the reference-update workflow
   "composer",
   // picker-menu: the anchored long-list state `long` (2026-11-07, issues N/N'/N'') has its block and
   // size-table rows in place; its reference PNG and side-by-side review wait for the

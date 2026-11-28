@@ -117,3 +117,9 @@ except the catalog).
 - 2026-11-28: plan written; wave 1 (B1, B2) dispatched.
 - 2026-11-28: B1 d6c940aa0, B2 0dc9c313d, B3 3df656899 committed; review fixes committed: B2
   9aba7cd30, B1 68c8454aa, B3 61cb95782. Next: review of the fix commits, then B4.
+- 2026-11-28: second review round fixed (f15145b60, 5ba0d3d8e, ec7496ddf). B4 compare in the
+  Linux Playwright image (composer, composer-menu, project-file-picker, plus composer blocks at
+  720 / 1280 windows): round 1 found the disabled send / input borders, the reference's missing
+  medium rule, sheet rows, chip width and close glyph; fixed in 642cad6c5 (product where it broke
+  the spec, reference otherwise); round 2 blind review: no severe or moderate differences, minor
+  LCD-vs-gray text smoothing in menus and sheets only. ACCEPTED note and changeset added.
