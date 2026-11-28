@@ -26,6 +26,7 @@ import { connectorQuery, connectorsQuery } from "../../../lib/query/conversation
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
 import type { Me } from "../../../lib/session";
+import { skillsConnectorsTabs } from "../../../lib/skills-connectors-tabs";
 import NotFound from "../not-found";
 
 /**
@@ -62,6 +63,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const scope = usePagePath("org");
   const pw = usePathWord("org");
   const t = useTranslations("connectors");
+  const tnav = useTranslations();
   const tc = useTranslations("orgComponents");
   const tn = useTranslations("connections");
   const locale = useLocale();
@@ -116,26 +118,25 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
         : []),
       { label: t("myConnections"), variant: "default" as const, href: "/account/connections" },
     ],
-    ...(disabled.length > 0
-      ? {
-          tabs: [
-            {
-              id: "all",
-              label: t("tabs.all"),
-              count: all.length + templates.length,
-              onSelect: () => setTab("all"),
-            },
-            {
-              id: "disabled",
-              label: t("tabs.disabled"),
-              count: disabled.length,
-              onSelect: () => setTab("disabled"),
-            },
-          ],
-          activeTab: active,
-        }
-      : {}),
+    // the head's tabs are Skills | Connectors (one sidebar entry, option B); all / disabled is the
+    // list's scope
+    tabs: skillsConnectorsTabs(tnav, !member),
+    activeTab: "connectors",
   };
+  const listScope =
+    disabled.length > 0
+      ? {
+          scope: {
+            label: t("tabs.label"),
+            value: active,
+            onChange: (v: string) => setTab(v === "disabled" ? "disabled" : "all"),
+            options: [
+              { value: "all", label: t("tabs.all"), count: all.length + templates.length },
+              { value: "disabled", label: t("tabs.disabled"), count: disabled.length },
+            ],
+          },
+        }
+      : {};
   const empty =
     all.length === 0 && templates.length === 0
       ? {
@@ -279,7 +280,13 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
 
   return (
     <>
-      <ListPage header={header} variant="cards" {...callout} {...(empty ? { empty } : {})}>
+      <ListPage
+        header={header}
+        variant="cards"
+        {...listScope}
+        {...callout}
+        {...(empty ? { empty } : {})}
+      >
         {rows.map(connectorCard)}
         {active === "all" && templates.map(templateCard)}
       </ListPage>

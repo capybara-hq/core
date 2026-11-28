@@ -31,10 +31,12 @@ type NavAudience = "all" | "member" | "admin";
 export type NavLevel = "guest" | "member" | "admin";
 
 /**
- * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
- * `primary` items follow New conversation (Agents, Skills, Connectors, Devices, Automations, Files; there is no home page: the new
- * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the More
- * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
+ * The work context's navigation (web order §2.1, acceptance 2026-11-07; option B, maintainer
+ * decision 2026-11-29): only routes that exist. `primary` items follow New conversation (Agents,
+ * Skills · Connectors, Automations, then the org's primary plugin pages; there is no home page: the
+ * new conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the More
+ * flyout after its plugin pages and one separator (Files, Devices, Channels, Plugins, Extensions,
+ * Evals & runs, Organization settings). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
  * console is the entry above the account row, for super admins. `drawer` places an item in the
  * compact drawer (design spec §6.53): a section entry or its "Skills, connectors, devices…" level; the
@@ -48,6 +50,10 @@ const NAV: readonly {
   icon: IconName;
   section: "primary" | "more";
   drawer?: "section" | "more";
+  /** Where the entry leads at a level other than its `href` (the merged entry for guests). */
+  hrefFor?: Partial<Record<NavLevel, string>>;
+  /** Every route the entry stands for (its tabs' routes); just `href` when absent. */
+  routes?: readonly string[];
   /** A management page that is desktop-only on touch: hidden there, never in the drawer. */
   desktopOnly?: true;
 }[] = [
@@ -60,22 +66,17 @@ const NAV: readonly {
     section: "primary",
     drawer: "section",
   },
-  // Skills: members browse them, guests don't
+  // Skills · Connectors (maintainer decision 2026-11-29, option B): one entry for the two pages,
+  // which are the tabs of one head (`/skills` | `/connectors`); guests, who don't browse skills,
+  // land on the connectors tab
   {
-    id: "skills",
-    key: "skills",
+    id: "skills-connectors",
+    key: "skillsConnectors",
     href: "/skills",
-    audience: "member",
-    icon: "skills",
-    section: "primary",
-    drawer: "more",
-  },
-  {
-    id: "connectors",
-    key: "connectors",
-    href: "/connectors",
+    hrefFor: { guest: "/connectors" },
+    routes: ["/skills", "/connectors"],
     audience: "all",
-    icon: "connector",
+    icon: "skills",
     section: "primary",
     drawer: "more",
   },
@@ -89,15 +90,15 @@ const NAV: readonly {
     section: "primary",
     drawer: "section",
   },
-  // Files: the person's file library (file library spec §6); in the drawer's "more" level, never
-  // a drawer section (the drawer's sections are closed)
+  // Files: the person's file library (file library spec §6); first in More (option B), in the
+  // drawer's "more" level, never a drawer section (the drawer's sections are closed)
   {
     id: "files",
     key: "files",
     href: "/files",
     audience: "member",
     icon: "file",
-    section: "primary",
+    section: "more",
     drawer: "more",
   },
   // Devices: where a person's conversations run their commands and keep their files
@@ -110,6 +111,15 @@ const NAV: readonly {
     icon: "cpu",
     section: "more",
     drawer: "more",
+  },
+  {
+    id: "channels",
+    key: "channels",
+    href: "/channels",
+    audience: "admin",
+    icon: "channel",
+    section: "more",
+    desktopOnly: true,
   },
   // Plugins (what the platform offers this org): members browse and ask, org admins switch them
   {
@@ -129,15 +139,6 @@ const NAV: readonly {
     href: "/extensions",
     audience: "member",
     icon: "extension",
-    section: "more",
-    desktopOnly: true,
-  },
-  {
-    id: "channels",
-    key: "channels",
-    href: "/channels",
-    audience: "admin",
-    icon: "channel",
     section: "more",
     desktopOnly: true,
   },
@@ -165,7 +166,7 @@ const NAV: readonly {
 ];
 
 /** Every workspace page the sidebar's items and its More menu open (the path level's first level). */
-export const NAV_HREFS: readonly string[] = NAV.map((n) => n.href);
+export const NAV_HREFS: readonly string[] = NAV.flatMap((n) => n.routes ?? [n.href]);
 
 const VISIBLE: Record<NavLevel, readonly NavAudience[]> = {
   guest: ["all"],
@@ -221,14 +222,13 @@ export function activeNavOf(pathname: string): string {
     return `ext:${decode(ext[1])}/${decode(ext[2])}`;
   if (under(pathname, "/settings")) return "settings";
   if (under(pathname, "/agents")) return "agents";
-  if (under(pathname, "/skills")) return "skills";
+  if (under(pathname, "/skills") || under(pathname, "/connectors")) return "skills-connectors";
   if (under(pathname, "/inbox")) return "inbox";
   if (under(pathname, "/channels")) return "channels";
   if (under(pathname, "/evals") || under(pathname, "/trajectories")) return "evals";
   if (under(pathname, "/admin")) return "admin";
   if (under(pathname, "/plugins")) return "plugins";
   if (under(pathname, "/extensions")) return "extensions";
-  if (under(pathname, "/connectors")) return "connectors";
   if (under(pathname, "/devices")) return "devices";
   if (under(pathname, "/automations")) return "automations";
   if (under(pathname, "/files")) return "files";
@@ -463,7 +463,7 @@ export function useNav(
     section: n.section,
     id: n.id,
     label: t(`nav.${n.key}`),
-    href: n.href,
+    href: n.hrefFor?.[level] ?? n.href,
     icon: n.icon,
     ...(n.desktopOnly ? { desktopOnly: true } : {}),
   }));
@@ -555,7 +555,7 @@ export function useDrawerNav(
       : undefined;
   const item = (n: (typeof NAV)[number]) => ({
     label: t(`nav.${n.key}`),
-    href: n.href,
+    href: n.hrefFor?.[level] ?? n.href,
     icon: n.icon,
   });
   const sections: DrawerNav["sections"] = [
@@ -577,9 +577,13 @@ export function useDrawerNav(
     icon,
   });
   const shown = shownOnCompact(extensions);
+  // the sidebar's order (option B): the main nav's Skills · Connectors, then More's plugin pages,
+  // then More's built-in items (Files, Devices)
+  const drawerMore = visible.filter((n) => n.drawer === "more");
   const more: DrawerNav["more"] = [
-    ...visible.filter((n) => n.drawer === "more").map((n) => ({ id: n.id, ...item(n) })),
+    ...drawerMore.filter((n) => n.section === "primary").map((n) => ({ id: n.id, ...item(n) })),
     ...shown.filter((x) => x.section === "more").map((x) => page(x, "extension")),
+    ...drawerMore.filter((n) => n.section === "more").map((n) => ({ id: n.id, ...item(n) })),
   ];
   // a primary entry carries its own icon among the built-in ones; the More group keeps one icon
   const primaryExtensions = shown

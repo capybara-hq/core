@@ -297,24 +297,22 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
       // A new conversation starts at the composer (UI refresh B)
       ["新会话", "/"],
-      // no home item; 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07)
+      // no home item; Skills · Connectors is one entry under Agents (option B, 2026-11-29)
       [zh.nav.agents, "/agents"],
-      [zh.nav.skills, "/skills"],
-      [zh.nav.connectors, "/connectors"],
+      [zh.nav.skillsConnectors, "/skills"],
       [zh.nav.automations, "/automations"],
-      [zh.nav.files, "/files"],
     ]);
     // the inbox is the brand row's icon button
     expect(screen.getByRole("link", { name: zh.nav.inbox }).getAttribute("href")).toBe("/inbox");
     const menu = await openMore(nav);
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-      // 更多: devices, plugins (members and up), extensions (org admins)
+      // More (option B): Files, Devices, Channels (org admins), Plugins, Extensions, Evals, Settings
+      [zh.nav.files, "/files"],
       [zh.nav.devices, "/devices"],
+      [zh.nav.channels, "/channels"],
       [zh.nav.plugins, "/plugins"],
       [zh.nav.extensions, "/extensions"],
-      // org admins (owner) see channels, evals and organization settings
-      [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],
       [zh.nav.settings, "/settings/organization"],
     ]);
@@ -331,8 +329,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
   it("普通成员的顶栏不显示管理员才能用的「渠道」", async () => {
     renderFrame(shellOf(as("member")));
     const nav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(nav).getByRole("link", { name: zh.nav.connectors })).toBeTruthy();
-    expect(within(nav).getByRole("link", { name: zh.nav.skills })).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: zh.nav.skillsConnectors })).toBeTruthy();
     const menu = await openMore(nav);
     expect(within(menu).queryByRole("menuitem", { name: zh.nav.channels })).toBeNull();
     expect(within(menu).queryByRole("menuitem", { name: zh.nav.evals })).toBeNull();
@@ -458,12 +455,14 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(nav).getByRole("link", { name: zh.nav.agents })).toBeTruthy();
   });
 
-  it("访客的顶栏不显示「技能」", () => {
+  it("访客的「技能 · 连接器」进入连接器", () => {
     renderFrame(shellOf(as("guest")));
     const nav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(nav).queryByRole("link", { name: zh.nav.skills })).toBeNull();
     expect(within(nav).getByRole("link", { name: zh.nav.agents })).toBeTruthy();
-    expect(within(nav).getByRole("link", { name: zh.nav.connectors })).toBeTruthy();
+    // guests don't browse skills: the entry opens the connectors tab
+    expect(
+      within(nav).getByRole("link", { name: zh.nav.skillsConnectors }).getAttribute("href"),
+    ).toBe("/connectors");
     // a guest's 更多 holds only 设备 (acceptance 2026-11-12)
     expect(within(nav).getByRole("button", { name: "更多" })).toBeTruthy();
   });
@@ -567,10 +566,15 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
 });
 
 describe("activeNavOf", () => {
-  it("connectors light /connectors*; every /settings page is Settings; a conversation is none", () => {
-    expect(activeNavOf("/connectors")).toBe("connectors");
-    expect(activeNavOf("/connectors/x")).toBe("connectors");
-    expect(activeNavOf("/connectors/install")).toBe("connectors");
+  it("技能 · 连接器 lights on both tabs (/skills*, /connectors*); every /settings page is Settings; a conversation is none", () => {
+    for (const p of [
+      "/skills",
+      "/skills/s1",
+      "/connectors",
+      "/connectors/x",
+      "/connectors/install",
+    ])
+      expect(activeNavOf(p)).toBe("skills-connectors");
     for (const p of ["/settings", "/settings/organization", "/settings/sandbox"]) {
       expect(activeNavOf(p)).toBe("settings");
     }
@@ -585,8 +589,6 @@ describe("activeNavOf", () => {
     // the old `/chat` never renders (next.config redirects it to `/`); admin pages are not 新会话
     expect(activeNavOf("/chat")).toBe("");
     expect(activeNavOf("/admin/plugins")).not.toBe("new");
-    expect(activeNavOf("/skills")).toBe("skills");
-    expect(activeNavOf("/skills/s1")).toBe("skills");
     expect(activeNavOf("/plugins")).toBe("plugins");
     expect(activeNavOf("/plugins/x/enable")).toBe("plugins");
     expect(activeNavOf("/extensions")).toBe("extensions");

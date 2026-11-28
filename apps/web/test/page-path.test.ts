@@ -18,6 +18,7 @@ import {
 } from "../src/components/shell/path";
 import { pluginTabs } from "../src/lib/admin-tabs";
 import { evalsTabs } from "../src/lib/evals-tabs";
+import { skillsConnectorsTabs } from "../src/lib/skills-connectors-tabs";
 
 describe("buildPagePath", () => {
   it("puts the org slug first and links it home (the new conversation)", () => {
@@ -94,6 +95,7 @@ describe("route words (names, never URL slugs; maintainer decision 2026-11-28)",
 });
 
 const heads = [
+  skillsConnectorsTabs((k: string) => k),
   adminItemTabs("agents", "items", { items: "a", templates: "t" }).tabs,
   adminItemTabs("connectors", "items", { items: "c", templates: "t" }).tabs,
   pluginTabs((k: string) => k),
@@ -140,6 +142,8 @@ describe("the path level follows navigation (maintainer decision 2026-11-29)", (
   ];
   it("every sidebar, 更多, account menu, admin nav, tab and settings sub-nav route is first-level", () => {
     for (const href of first) expect(pathLevel(href), href).toBe("first");
+    // the merged Skills · Connectors entry's two tabs, and Files under More (option B)
+    for (const href of ["/skills", "/connectors", "/files"]) expect(first).toContain(href);
     // the More menu's organization settings and the account menu's personal settings among them
     expect(first).toContain("/settings/organization");
     expect(first).toContain("/account/profile");
@@ -216,5 +220,16 @@ describe("routeSegments", () => {
       .map((f) => `/${f.replace(/\/?page\.tsx$/, "")}`)
       .sort();
     expect([...APP_PAGES].sort()).toEqual(pages);
+  });
+});
+
+describe("the Skills · Connectors head (option B, maintainer decision 2026-11-29)", () => {
+  it("links both routes as its tabs, each with its own label; a guest gets no tab row", () => {
+    const tabs = skillsConnectorsTabs((k) => (k === "nav.skills" ? "技能" : "连接器"));
+    expect(tabs.map((t) => [t.id, t.label, t.href])).toEqual([
+      ["skills", "技能", "/skills"],
+      ["connectors", "连接器", "/connectors"],
+    ]);
+    expect(skillsConnectorsTabs((k) => k, true)).toEqual([]);
   });
 });

@@ -89,7 +89,7 @@ export type SidebarContext =
   | {
       kind: "work";
       org: SidebarOrg | null;
-      /** After New conversation: Agents, Skills, Connectors (there is no home item). */
+      /** After New conversation: Agents, Skills · Connectors, Automations (no home item). */
       primary: SidebarNavItem[];
       /** The 更多 flyout's fixed items. */
       more: SidebarNavItem[];
@@ -98,7 +98,7 @@ export type SidebarContext =
        * after the built-in primary entries with their icon and title.
        */
       primaryExtensions?: SidebarNavItem[];
-      /** Extension pages, in the 更多 flyout after a separator. */
+      /** Extension pages, first in the More flyout, a separator before the fixed items. */
       moreExtensions?: SidebarNavItem[];
       /**
        * The inbox: an icon button in the brand row (a rail icon below 1280), with a count badge
@@ -916,10 +916,12 @@ function SidebarNav({
     ...(n.desktopOnly ? { desktopOnly: true } : {}),
     ...(n.id === p.activeNav ? { current: true } : {}),
   });
+  // the org's plugin pages first, one separator, then the built-in items (maintainer decision
+  // 2026-11-29, option B)
   const moreItems: MenuItem[] = [
-    ...more.map(toMenu),
-    ...(more.length > 0 && moreExtensions.length > 0 ? ["separator" as const] : []),
     ...moreExtensions.map(toMenu),
+    ...(more.length > 0 && moreExtensions.length > 0 ? ["separator" as const] : []),
+    ...more.map(toMenu),
   ];
   // 更多 opens a flyout to the right of the sidebar (Enter / Space / → open it, Escape closes it
   // and returns focus); it is active while the current page is one of its items.

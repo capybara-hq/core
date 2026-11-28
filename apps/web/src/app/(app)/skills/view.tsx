@@ -30,6 +30,7 @@ import { orgComponentsQuery } from "../../../lib/query/components";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { skillsQuery } from "../../../lib/query/skills";
 import { useWorkspace } from "../../../lib/query/workspace";
+import { skillsConnectorsTabs } from "../../../lib/skills-connectors-tabs";
 import NotFound from "../not-found";
 import { type SkillUpload, useSkillUpload } from "./use-skill-upload";
 
@@ -58,6 +59,7 @@ function Skills({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const pw = usePathWord("org");
   const t = useTranslations("skills");
+  const tnav = useTranslations();
   const tc = useTranslations("orgComponents");
   const { me } = useSession();
   const admin = canUpdateOrg(me);
@@ -137,6 +139,9 @@ function Skills({ orgId }: { orgId: string }) {
           path: [...scope, pw("skills")],
           title: t("title"),
           description: t("description"),
+          // one sidebar entry, two routed tabs (option B)
+          tabs: skillsConnectorsTabs(tnav),
+          activeTab: "skills",
           ...(admin ? { actions: [{ ...upload, variant: "primary" as const }] } : {}),
         }}
         variant="cards"

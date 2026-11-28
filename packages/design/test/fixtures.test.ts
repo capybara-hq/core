@@ -89,21 +89,22 @@ describe("@capybara-hq/design/fixtures", () => {
       expect(icons.has(n.icon), n.icon).toBe(true);
     const ids = fixtures.NAV_FIXTURE.map((n) => n.id);
     expect(new Set(ids).size).toBe(ids.length);
-    // no home item; 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07)
+    // no home item; Skills · Connectors is one entry under Agents (option B, 2026-11-29)
     expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "primary").map((n) => n.id)).toEqual([
       "agents",
-      "skills",
-      "connectors",
+      "skills-connectors",
     ]);
     // the inbox is a brand-row icon button (acceptance round 2, B2)
     expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "brand").map((n) => n.id)).toEqual([
       "inbox",
     ]);
+    // More's fixed items (option B): Files first, then Channels, Plugins, Extensions, Evals, Settings;
+    // agent templates are the Templates tab of Agents, no More item (ruling P4-14)
     expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "more").map((n) => n.id)).toEqual([
+      "files",
+      "channels",
       "plugins",
       "extensions",
-      // 智能体模板 is the 模板 tab of 智能体, no 更多 item (ruling P4-14)
-      "channels",
       "evals",
       "settings",
     ]);

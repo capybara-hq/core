@@ -228,7 +228,7 @@ describe("Sidebar navigation (work context)", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
-  it("更多 opens a flyout menu to the right, extension pages after a separator", async () => {
+  it("更多 opens a flyout menu to the right, extension pages first, a separator, then the fixed items", async () => {
     const p = props();
     zh(
       <Sidebar
@@ -252,7 +252,7 @@ describe("Sidebar navigation (work context)", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((i) => i.textContent),
-    ).toEqual(["插件", "组织设置", "看板"]);
+    ).toEqual(["看板", "插件", "组织设置"]);
     // like the main nav, every flyout item carries its icon
     for (const item of within(menu).getAllByRole("menuitem")) {
       expect(item.querySelector(".cb-icon")).not.toBeNull();

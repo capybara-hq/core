@@ -69,17 +69,18 @@ function ids(level: NavLevel, superAdmin: boolean) {
 
 describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // The inbox is the brand row's button (acceptance round 2, B2). No home item: 新会话 is the home;
-  // Skills and Connectors sit under Agents (acceptance 2026-11-07). Skills is for members up.
-  const primaryGuest = ["agents", "connectors"];
+  // Skills · Connectors is one entry under Agents (option B, maintainer decision 2026-11-29); a
+  // guest's leads to the connectors tab.
+  const primaryGuest = ["agents", "skills-connectors"];
   // Automations for members up (guests can't create tasks; automations spec §10)
-  // Files for members up too (guests have no library; file library spec §6)
-  const primary = ["agents", "skills", "connectors", "automations", "files"];
+  const primary = ["agents", "skills-connectors", "automations"];
   // Organization settings is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 is no item: it is the 模板 tab of 智能体 (ruling P4-14)
-  // 设备 sits under 更多 (acceptance 2026-11-12)
-  const member = ["devices", "plugins", "extensions", "settings"];
-  const admin = ["devices", "plugins", "extensions", "channels", "evals", "settings"];
+  // Devices sits under More (acceptance 2026-11-12); Files leads More for members up (option B; guests
+  // have no library, file library spec §6)
+  const member = ["files", "devices", "plugins", "extensions", "settings"];
+  const admin = ["files", "devices", "channels", "plugins", "extensions", "evals", "settings"];
   const cases: [NavLevel, boolean, string[], string[]][] = [
     ["guest", false, primaryGuest, ["devices"]],
     ["member", false, primary, member],
@@ -103,12 +104,11 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       cleanup();
       expect(top).not.toContain("overview");
       expect(more).not.toContain("overview");
-      expect(more).not.toContain("skills");
-      expect(more).not.toContain("connectors");
+      expect(more).not.toContain("skills-connectors");
     }
   });
 
-  it("the nav reads 智能体 技能 连接器 自动化 文件 after 新会话; members see 设备 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+  it("the nav reads 智能体 技能 · 连接器 自动化 after 新会话; members see 文件 设备 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -127,16 +127,14 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       </NextIntlClientProvider>,
     );
     const read = (id: string) => JSON.parse(screen.getByTestId(id).textContent ?? "{}");
-    // 技能 and 连接器 keep the icons they had in the flyout
     expect(read("member")).toEqual({
       primary: [
         ["智能体", "agent", "/agents"],
-        ["技能", "skills", "/skills"],
-        ["连接器", "connector", "/connectors"],
+        ["技能 · 连接器", "skills", "/skills"],
         ["自动化", "clock", "/automations"],
-        ["文件", "file", "/files"],
       ],
       more: [
+        ["文件", "file", "/files"],
         ["设备", "cpu", "/devices"],
         ["插件", "catalog", "/plugins"],
         ["扩展", "extension", "/extensions"],
@@ -144,11 +142,13 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       ],
     });
     expect(read("admin").primary).toEqual(read("member").primary);
+    // Files, Devices, Channels, Plugins, Extensions, Evals & runs, Organization settings (option B)
     expect(read("admin").more).toEqual([
+      ["文件", "file", "/files"],
       ["设备", "cpu", "/devices"],
+      ["渠道", "channel", "/channels"],
       ["插件", "catalog", "/plugins"],
       ["扩展", "extension", "/extensions"],
-      ["渠道", "channel", "/channels"],
       ["评测与运行", "evals", "/evals"],
       ["组织设置", "settings", "/settings/organization"],
     ]);
@@ -258,7 +258,7 @@ describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 
     return out as ReturnType<typeof useDrawerNav>;
   }
 
-  it("a member: 收件箱 with the count, 智能体, 自动化; more holds 技能 连接器 文件 设备 and an org page", () => {
+  it("a member: 收件箱 with the count, 智能体, 自动化; more holds 技能 · 连接器, an org page, 文件 设备", () => {
     const d = drawer("member", { count: 3, more: false });
     expect(d.sections.map((s) => [s.id, s.label, s.href])).toEqual([
       ["inbox", "收件箱", "/inbox"],
@@ -267,13 +267,8 @@ describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 
     ]);
     expect(d.sections[0]?.badge).toEqual({ count: 3 });
     expect(d.menuBadge).toEqual({ count: 3 });
-    expect(d.more.map((m) => m.href)).toEqual([
-      "/skills",
-      "/connectors",
-      "/files",
-      "/devices",
-      "/p/acme/board",
-    ]);
+    // the sidebar's order: the main entry, More's plugin pages, then More's built-in items
+    expect(d.more.map((m) => m.href)).toEqual(["/skills", "/p/acme/board", "/files", "/devices"]);
     expect(d.moreLabel).toBe("技能、连接器、设备…");
     expect(d.allConversations).toEqual({ label: "全部会话", href: "/conversations" });
     expect(d.newConversation).toEqual({ label: "新会话", href: "/" });
@@ -290,7 +285,7 @@ describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 
   it("a guest: no 自动化 and no 技能; nothing pending, no badge", () => {
     const d = drawer("guest");
     expect(d.sections.map((s) => s.id)).toEqual(["inbox", "agents"]);
-    expect(d.more.map((m) => m.href)).toEqual(["/connectors", "/devices", "/p/acme/board"]);
+    expect(d.more.map((m) => m.href)).toEqual(["/connectors", "/p/acme/board", "/devices"]);
     expect(d.sections[0]?.badge).toBeUndefined();
     expect(d.menuBadge).toBeUndefined();
   });
@@ -382,7 +377,8 @@ describe("activeNavOf", () => {
     ["/agents/a1", "agents"],
     // the template page sits under 智能体 (its 模板 tab; ruling P4-14)
     ["/agents/templates/t1", "agents"],
-    ["/connectors/c1", "connectors"],
+    ["/connectors/c1", "skills-connectors"],
+    ["/skills", "skills-connectors"],
     ["/devices", "devices"],
     ["/devices/e1", "devices"],
     ["/automations", "automations"],

@@ -70,6 +70,16 @@ above its divider and 8 px below):
    active while the current page is one of its items (that item is marked current in the flyout).
    Enter / Space / → open it, Escape closes it and returns focus. Nothing is remembered; it never
    opens by itself.
+   *Amended (option B, maintainer decision 2026-11-29): the main nav reads 新会话 · 智能体 ·
+   技能 · 连接器 · 自动化 · [the org's primary plugin pages, such as 项目] · 更多. 技能 and 连接器 are
+   one entry labelled 「技能 · 连接器」 / "Skills · Connectors" that opens one place whose head tabs
+   are 技能 | 连接器 (the routes `/skills` and `/connectors` stay; a routed-tab head, both
+   first-level, each tab keeping its title); the entry is current on either route, and a guest's
+   leads to `/connectors` (guests do not browse skills, and see no tab row). 文件 moves into 更多.
+   更多 lists the org's plugin pages first (such as 记忆), then one separator, then 文件 · 设备 ·
+   渠道 · 插件 · 扩展 · 评测与运行 · 组织设置 (by role as before). The compact drawer and the
+   medium rail follow the same order; the org's navigation setting (主导航 or 更多 for plugin
+   pages, at most 3 in the main nav) is unchanged.*
 5. **Conversations** take the rest of the height and scroll on their own:
    - A section label `会话` with a filter button (search by title, filter: running / waiting / all).
    - Groups by agent, most recent first; a group header (agent name, collapse caret, `＋` = new

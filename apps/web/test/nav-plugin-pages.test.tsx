@@ -143,13 +143,9 @@ describe("the compact drawer", () => {
     // a primary entry carries its own icon; the More group keeps the extension icon
     expect(d.primaryExtensions?.map((x) => x.icon)).toEqual(["user"]);
     expect(d.more.find((m) => m.href === "/p/acme/plain")?.icon).toBe("extension");
-    expect(d.more.map((m) => m.href)).toEqual([
-      "/skills",
-      "/connectors",
-      "/files",
-      "/devices",
-      "/p/acme/plain",
-    ]);
+    // the sidebar's order (option B): the main nav's Skills · Connectors, More's plugin pages, then
+    // More's built-in items
+    expect(d.more.map((m) => m.href)).toEqual(["/skills", "/p/acme/plain", "/files", "/devices"]);
   });
 });
 

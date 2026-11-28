@@ -138,7 +138,7 @@ describe("the drawer from the menu button", () => {
       within(level)
         .getAllByRole("link")
         .map((a) => a.getAttribute("href")),
-    ).toEqual(["/skills", "/connectors", "/files", "/devices"]);
+    ).toEqual(["/skills", "/files", "/devices"]);
   });
 
   it("最近会话 reads my newest conversations by time, each with its agent and state", async () => {

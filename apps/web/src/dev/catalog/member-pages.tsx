@@ -378,7 +378,11 @@ function Page({ page }: { page: MemberPage }) {
 export function MemberPageCatalog({ page }: { page: MemberPage }) {
   const [client] = useState(seeded);
   const { onOpenCommands: _, ...sidebar } = sidebarProps(
-    { active: page, level: "guest" },
+    // the merged Skills · Connectors entry is current on both pages (option B)
+    {
+      active: page === "skills" || page === "connectors" ? "skills-connectors" : page,
+      level: "guest",
+    },
     () => "#",
   );
   return (

@@ -2142,6 +2142,7 @@
     "devices": "Devices",
     "channels": "Channels",
     "skills": "Skills",
+    "skillsConnectors": "Skills · Connectors",
     "evals": "Evals & runs",
     "settings": "Organization settings",
     "admin": "Admin console",
@@ -2874,7 +2875,8 @@
     },
     "tabs": {
       "all": "All",
-      "disabled": "Disabled"
+      "disabled": "Disabled",
+      "label": "Status"
     },
     "cards": {
       "permissions": "Permissions"
