@@ -460,4 +460,13 @@ describe("review fixes", () => {
     expect(project.querySelector('[data-part="sheet-group-heading"]')?.textContent).toBe("项目");
     expect(project.querySelector('[data-part="place-notice"]')?.textContent).toBe("正在加载项目");
   });
+
+  it("draws a disabled sheet option in the disabled color and the disabled send icon faint", () => {
+    expect(css).toMatch(
+      /\.cb-sheet-option\[data-disabled="true"\] \{\s*color: var\(--cb-disabled\);/,
+    );
+    expect(css).toMatch(
+      /\.cb-send\.cb-btn:disabled \{\s*border-color: transparent;\s*background: var\(--cb-selected\);\s*color: var\(--cb-faint\);/,
+    );
+  });
 });

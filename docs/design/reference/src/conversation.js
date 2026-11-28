@@ -636,12 +636,12 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
       const mode = `<button class="r-icon-btn r-touch-icon" data-part="mode-button" title="${esc(modeTitle)}" aria-label="${esc(`${M.label}: ${P.label}: ${M.effortLabel} ${effort}`)}">${icon(P.icon, 14)}</button>`;
       const options = `<button class="r-place-chip r-options-chip" data-part="composer-options" aria-label="${esc(`会话选项: ${model} · ${effort}`)}"><span class="r-place-value">${esc(model)}</span>${icon("chevron-down", 12)}</button>`;
       const pillSend = `<button class="r-icon-btn r-send r-pill-send" aria-label="${esc(K.send)}" disabled>${icon("arrow-up", 16)}</button>`;
-      return `<div class="r-cpose"><div class="r-cpose-row"><div class="r-composer-place" data-part="composer-place" role="group" aria-label="${esc(K.place)}">${chip}</div><span class="r-grow"></span>${mode}${options}</div><div class="r-cpill" data-part="composer-box"><button class="r-icon-btn r-touch-icon r-muted" aria-label="${esc(K.attach)}">${icon("plus", 16)}</button><label class="r-sr" for="msg">消息</label>${textarea}${pillSend}</div></div>`;
+      return `<div class="r-cpose"><div class="r-cpose-row"><div class="r-composer-place" data-part="composer-place" role="group" aria-label="${esc(K.place)}">${chip}</div>${mode}${options}</div><div class="r-cpill" data-part="composer-box"><button class="r-icon-btn r-touch-icon r-muted" aria-label="${esc(K.attach)}">${icon("plus", 16)}</button><label class="r-sr" for="msg">消息</label>${textarea}${pillSend}</div></div>`;
     }
     const strip = locked
       ? `${picker(device, { locked: `${device}: ${K.deviceLocked}`, value: true })}<span class="r-place-sep" data-part="composer-place-sep" aria-hidden="true">/</span>${picker(project, { locked: `${project}: ${K.projectLocked}`, value: true })}`
       : `${picker(device)}<span class="r-place-sep" data-part="composer-place-sep" aria-hidden="true">/</span>${picker(project)}`;
-    const label = o.form === "medium" ? "" : esc(P.label);
+    const label = o.form === "medium" ? "" : `<span class="r-mode-label">${esc(P.label)}</span>`;
     const mode = `<button class="r-btn r-picker" data-variant="ghost" data-part="mode-button" title="${esc(modeTitle)}">${icon(P.icon, 14)}${label}${icon("chevron-down", 12)}</button>`;
     return `<div class="r-composer"><div class="r-composer-place" data-part="composer-place" role="group" aria-label="${esc(K.place)}">${strip}</div><label class="r-sr" for="msg">消息</label>${textarea}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${mode}<span class="r-grow"></span>${picker(`${model} · ${effort}`)}${send}</div></div>`;
   }

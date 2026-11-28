@@ -1055,6 +1055,10 @@ span.cb-title-btn {
   color: var(--cb-ink);
   cursor: pointer;
 }
+.cb-sheet-option[data-disabled="true"] {
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
 .cb-sheet-option[data-checked="true"] {
   background: var(--cb-selected);
 }
@@ -1248,7 +1252,7 @@ span.cb-title-btn {
 .cb-send.cb-btn:disabled {
   border-color: transparent;
   background: var(--cb-selected);
-  color: var(--cb-disabled);
+  color: var(--cb-faint);
 }
 .cb-stop.cb-btn,
 .cb-stop.cb-btn:hover:not(:disabled) {
@@ -2393,7 +2397,7 @@ button.cb-property-row {
   }
   .cb-composer-box > .cb-send.cb-btn:disabled {
     background: var(--cb-selected);
-    color: var(--cb-disabled);
+    color: var(--cb-faint);
   }
   /* the pickers fold into the chip and its sheet at every width; the suggestion button stays out */
   .cb-composer-pickers,

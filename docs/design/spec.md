@@ -1584,7 +1584,7 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
   - The effort picker is hidden when the selected model declares no `effort` values; with the mode menu, the effort segments are hidden then and the model picker reads the model alone.
   - No standing explanation sits in or under the composer: guidance is a placeholder (the running and waiting hints, which show only while they apply) or lives in a menu.
   - **Context meter** (`ContextMeter`, `composer-context-meter`, state `context-meter`, maintainer decision 2026-11-28; it replaces the status bar's "上下文 N%"): a ring `control.dense` square right before send (a `line` track, a `muted` arc of the used share, `role="meter"` 0 to 100), shown once the conversation has usage and absent before; its tooltip and name "上下文已用 N%" / "Context N% used". From the compaction threshold (80 % by default) the arc is `fail` (state `context-meter-over`, `data-tone="fail"`).
-  - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon. While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
+  - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon and no border (§6.1: an icon button never gains a border when disabled). While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
 - Placeholders: idle "输入消息，/ 使用命令" / "Message, / for commands"; new "想让 <agent> 做什么？" / "What should <agent> do?"; while running (state `running`) the hint "运行中发送的消息会在下一步交给智能体" / "Messages sent while it works reach it at its next step" (run input spec 2026-11-07 §4: ↵ and ⌘↵ both send an interjection); a prompt suggestion (state `suggestion`) replaces the idle placeholder. Keys: §6.11.
 - Existing behavior carries over: file drop and paste (FileDrop), at most `attachments.maxPerMessage` attachments, `clientMessageId` dedupe on retry.
 - **Menus** (§6.16.30, composer menus spec 2026-11-28): ＋, `/` and `@` open the composer's menu, drawn by the composer's `menu` slot (`menu.node`, the open `ComposerMenu`) above the frame. While the page passes `menu` the textarea is a **combobox** (`role="combobox"`, `aria-autocomplete="list"`, `aria-expanded`, and while open `aria-controls` the menu's listbox and `aria-activedescendant` its active row), focus never leaves it, and the menu's keys (`menu.onKeyDown`: ↑↓ ↵ Esc) come before the composer's own, so the ↵ that picks a row never sends. The control row's order and sizes do not change.
@@ -1611,7 +1611,7 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`, 
 | send | idle | width | control.default |
 | send | idle | height | control.default |
 | send | idle | background-color | color.selected |
-| send | idle | color | color.disabled |
+| send | idle | color | color.faint |
 | composer-input | new | font-size | type.prose |
 | picker | new | height | control.default |
 | stop | running | width | control.default |

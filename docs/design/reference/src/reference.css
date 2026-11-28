@@ -292,6 +292,10 @@ textarea {
   color: var(--cb-faint);
   cursor: default;
 }
+/* spec §6.1: a disabled ghost or icon button never gains a border the enabled one lacks */
+.r-icon-btn:disabled:not([data-variant="default"]) {
+  border-color: transparent;
+}
 /* spec §6.1: a disabled primary keeps a `line` border, the `selected` ground, `disabled` text. */
 .r-btn[data-variant="primary"]:disabled {
   border-color: var(--cb-line);
@@ -338,7 +342,7 @@ textarea {
   border-color: var(--cb-fail);
 }
 .r-input:disabled {
-  border-color: var(--cb-line-soft);
+  border-color: var(--cb-line);
   background: var(--cb-hover);
   color: var(--cb-faint);
 }
@@ -8129,6 +8133,12 @@ span.r-scal-daynum {
   background: var(--cb-hover);
   color: var(--cb-muted);
 }
+/* §6.59: the close's x glyph is touch.sheet-close-icon at stroke 2.2 */
+.r-cmm-sheet-close svg {
+  width: var(--cb-touch-sheet-close-icon);
+  height: var(--cb-touch-sheet-close-icon);
+  stroke-width: 2.2;
+}
 .r-cmm-sheet-body {
   min-height: 0;
   overflow-y: auto;
@@ -8267,7 +8277,7 @@ span.r-scal-daynum {
   width: auto;
 }
 .r-pfp-search[data-disabled] {
-  border-color: var(--cb-line-soft);
+  border-color: var(--cb-line);
   background: var(--cb-hover);
 }
 /* The rows: one height for every folder (nine rows); the scroll pulls out by pad.default.x so the
@@ -8442,7 +8452,7 @@ span.r-scal-daynum {
 .r-cpose-row > .r-composer-place {
   flex: 0 1 auto;
   min-width: 0;
-  margin: 0;
+  margin: 0 auto 0 0;
 }
 .r-place-chip {
   display: inline-flex;
@@ -8535,7 +8545,8 @@ span.r-scal-daynum {
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
-  height: 40px;
+  /* the touch form's option rows (§6.7): touch.row */
+  height: var(--cb-touch-row);
   padding: 0 var(--cb-space-2);
   border-radius: var(--cb-radius-sm);
   color: var(--cb-ink);
@@ -8554,4 +8565,11 @@ span.r-scal-daynum {
   flex: none;
   width: 14px;
   height: 14px;
+}
+
+/* Medium (600 to 840, by window width as in the product): the mode shows its icon and chevron. */
+@media (min-width: 600px) and (max-width: 840px) {
+  .r-composer-place ~ .r-composer-bar .r-mode-label {
+    display: none;
+  }
 }
