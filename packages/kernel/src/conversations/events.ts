@@ -1061,9 +1061,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         .optional(),
       /**
        * The connectors the message names (composer inline tokens spec §3.5), in block order:
-       * `toolCount` the agent's offered tools of it at send time, `loadedTools` its tool keys the
-       * mention loads under tool search (empty when tool search was off or it has more than 20
-       * tools). Each has a mention block after the referenced conversations' blocks. Absent: none.
+       * `toolCount` the agent's offered tools of it at send time, `loadedTools` its offered tool
+       * keys when it has at most 20 (empty with more), loaded from this message on by steps that
+       * run with tool search (inert in a step without it). The mention block's last sentence is
+       * the send-time tool search snapshot. Each has a mention block after the referenced
+       * conversations' blocks. Absent: none.
        */
       connectorMentions: z
         .array(

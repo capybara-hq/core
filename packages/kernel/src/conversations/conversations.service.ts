@@ -384,7 +384,10 @@ export interface ConnectorMention {
   name: string;
   /** The agent's offered tools of it at send time. */
   toolCount: number;
-  /** Its tool keys the mention loaded under tool search (empty: off, or more than 20 tools). */
+  /**
+   * Its offered tool keys when it offers at most 20 (else empty), loaded from this message on when
+   * a step runs with tool search (inert without it).
+   */
   loadedTools: string[];
 }
 
@@ -430,7 +433,16 @@ export const projectFileText = (path: string, root: string): string =>
 const messageFiles = (
   input: Pick<UserMessageInput, "files">,
   extra: Pick<ResolvedExtra, "fileTokenIds">,
-): string[] => [...(extra.fileTokenIds ?? []), ...(input.files ?? [])];
+): string[] => {
+  const tokens = extra.fileTokenIds ?? [];
+  return [...tokens, ...uploadsBeside(input.files ?? [], tokens)];
+};
+
+/** A message's uploads without the files its file tokens already name (attached once). */
+const uploadsBeside = (uploads: readonly string[], fileTokenIds: readonly string[]): string[] => {
+  const named = new Set(fileTokenIds);
+  return uploads.filter((id) => !named.has(id));
+};
 
 /**
  * The files' blocks with a `[file: <label>]` text block before each media block (composer inline
@@ -700,7 +712,10 @@ export class ConversationsService {
     private readonly content: Pick<ConnectorContent, "resolveAttachments" | "readResources">,
     /** Attaches the sender's library files to the conversation in the message's transaction. */
     @Inject(LibraryFilesService)
-    private readonly libraryFiles: Pick<LibraryFilesService, "attachForMessage" | "labelsFor">,
+    private readonly libraryFiles: Pick<
+      LibraryFilesService,
+      "attachForMessage" | "labelsFor" | "checkMessageFileCount"
+    >,
     /** Renders a person's skill invocation (phase D). */
     @Inject(SkillInvoker) private readonly invoker: Pick<SkillInvoker, "prepare">,
     /** Stops a deleted conversation's background tasks. */
@@ -811,7 +826,8 @@ export class ConversationsService {
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
     // the project its files are checked in, read before the write (the binding inside it decides)
     const project =
-      (input.projectFiles?.length ?? 0) > 0
+      (input.projectFiles?.length ?? 0) > 0 ||
+      input.tokens?.some((t) => t.type === "projectFile") === true
         ? await this.bindingFor(orgId, accountId, deviceId, pick.project)
         : undefined;
     const extra = await this.resolveExtra(
@@ -819,6 +835,9 @@ export class ConversationsService {
       accountId,
       input,
       { deviceId, project, signal: internal.signal },
+      // no sandbox conversation yet: the row is written after the resolution (its id with it), so
+      // the device-bound builtins are listed as for a conversation without one; a connector's
+      // tools never depend on it, only the tool search threshold's count may
       { agent: agent.definition, source: internal.source },
     );
     const invoked = await this.prepareSkill(
@@ -2238,7 +2257,10 @@ export class ConversationsService {
     const paths = [...new Set(distinct("projectFile").map((t) => projectFilePath(t.path)))];
     const conversationIds = distinct("conversation").map((t) => t.id);
     const fileTokenIds = distinct("file").map((t) => t.id);
-    const uploads = input.files ?? [];
+    // a file both named by a token and uploaded is attached once, as the token
+    const uploads = uploadsBeside(input.files ?? [], fileTokenIds);
+    // the per-message file cap, before anything remote is read (attaching checks it again)
+    this.libraryFiles.checkMessageFileCount(fileTokenIds.length + uploads.length);
 
     // the agent's tools first (the database only), then the checks as without tokens, the
     // resources (remote reads) last
@@ -2350,7 +2372,8 @@ export class ConversationsService {
     const connectorLabelOf = (id: string): string => connectorLabels.get(id) ?? id;
     const rendered = renderInline(
       input.skill === undefined ? input.text : input.text.trim(),
-      tokens,
+      // `inline` names a project file by its normalized path
+      tokens.map((t) => (t.type === "projectFile" ? { ...t, path: projectFilePath(t.path) } : t)),
       labelOf,
       connectorLabelOf,
     );
@@ -2362,7 +2385,9 @@ export class ConversationsService {
         slug: c.slug,
         name: c.name,
         toolCount: keys.length,
-        loadedTools: toolSearch && keys.length <= MENTION_LOAD_MAX_TOOLS ? keys : [],
+        // recorded whatever the send-time tool search state: request building reads the loaded
+        // keys only under tool search, so they are inert when a step has it off
+        loadedTools: keys.length <= MENTION_LOAD_MAX_TOOLS ? keys : [],
       };
     });
     const blocks = [
@@ -2387,7 +2412,7 @@ export class ConversationsService {
       ...mentioned.map((c) =>
         connectorMentionText({
           label: connectorLabelOf(c.id),
-          name: c.name,
+          name: foldLabel(c.name),
           slug: c.slug,
           toolCount: c.tools.length,
           toolSearch,

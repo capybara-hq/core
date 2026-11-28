@@ -907,6 +907,20 @@ export class LibraryFilesService {
   }
 
   /**
+   * The per-message file cap (`attachments.maxPerMessage`): more files → `validation_failed`
+   * (path `files`). {@link attachForMessage} checks it; a message with file tokens is checked
+   * before its remote reads too.
+   */
+  checkMessageFileCount(count: number): void {
+    const max = this.config.get().attachments.maxPerMessage;
+    if (count > max) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "files", message: `At most ${max} files per message` },
+      ]);
+    }
+  }
+
+  /**
    * The names of the files in `ids` the sender owns and has not deleted (composer inline tokens
    * spec §3.2: the labels a message's file tokens and uploads get), read-only and outside any
    * transaction. An id it does not return is refused by {@link attachForMessage} in the message's
@@ -953,12 +967,7 @@ export class LibraryFilesService {
     firstSeq?: number,
   ): Promise<LogContentBlock[]> {
     const unique = [...new Set(ids)];
-    const max = this.config.get().attachments.maxPerMessage;
-    if (ids.length > max) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "files", message: `At most ${max} files per message` },
-      ]);
-    }
+    this.checkMessageFileCount(ids.length);
     if (unique.length !== ids.length) {
       throw new ApiError("validation_failed", "Request validation failed", [
         { path: "files", message: "Each file may appear only once per message" },

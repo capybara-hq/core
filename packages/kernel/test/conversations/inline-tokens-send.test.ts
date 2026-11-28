@@ -12,6 +12,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { projectFileText } from "../../src/conversations/conversations.service.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { DeviceProjectFilesService } from "../../src/devices/device-project-files.service.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { SkillInvoker } from "../../src/skills/invoke.js";
@@ -328,6 +329,50 @@ describe("tokens on the message body", () => {
     expect(await userMessages(conv)).toHaveLength(0);
   });
 
+  it("per-kind caps count distinct entities", async () => {
+    const conv = await createConv(req, orgId, agentId);
+    const c = randomUUID();
+    const over = [
+      Array.from({ length: 6 }, (_, i) => ({
+        type: "resource",
+        connectorId: c,
+        uri: `doc://${i}`,
+      })),
+      Array.from({ length: 11 }, (_, i) => ({ type: "projectFile", path: `f${i}.ts` })),
+      Array.from({ length: 4 }, () => ({ type: "conversation", id: randomUUID() })),
+    ];
+    for (const tokens of over) {
+      const res = await send(conv, { text: M.repeat(tokens.length), tokens });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(errOf(res)?.code).toBe("validation_failed");
+    }
+    // eleven project file tokens naming five files (paths repeated, also unnormalized) pass the cap
+    // of ten; under the cap of three, one conversation four times passes too
+    const paths = [
+      "a.ts",
+      "./a.ts",
+      "b.ts",
+      "c.ts",
+      "d.ts",
+      "e.ts",
+      "b.ts",
+      "c.ts",
+      "d.ts",
+      "e.ts",
+    ];
+    const sameFiles = [
+      ...paths.map((path) => ({ type: "projectFile", path })),
+      { type: "projectFile", path: "a.ts" },
+    ];
+    const r1 = await send(conv, { text: M.repeat(sameFiles.length), tokens: sameFiles });
+    expect(errOf(r1)?.code).not.toBe("validation_failed");
+    const id = randomUUID();
+    const sameConv = Array.from({ length: 4 }, () => ({ type: "conversation", id }));
+    const r2 = await send(conv, { text: M.repeat(4), tokens: sameConv });
+    expect(errOf(r2)?.code).toBe("conversation.reference_unavailable");
+    expect(await userMessages(conv)).toHaveLength(0);
+  });
+
   it("same entity twice counts once: one block, a placeholder at each place", async () => {
     const conv = await createConv(req, orgId, agentId);
     const c = await connector(chat, { name: "Slack", slug: "slack" });
@@ -362,7 +407,15 @@ describe("connector mentions", () => {
       },
     ]);
     expect(m?.payload.connectorMentions).toEqual([
-      { connectorId: c, slug: "slack", name: "Slack", toolCount: 2, loadedTools: [] },
+      // tool search off at send time: the second sentence is left out, the keys are recorded
+      // (inert in a step without tool search)
+      {
+        connectorId: c,
+        slug: "slack",
+        name: "Slack",
+        toolCount: 2,
+        loadedTools: ["mcp__slack__search", "mcp__slack__write"],
+      },
     ]);
     expect(m?.payload.inline).toEqual([
       { kind: "connector", start: 0, end: 18, label: "Slack", ref: { connectorId: c } },
@@ -614,6 +667,38 @@ describe("file lines", () => {
     expect(refs).toEqual([lib, up]);
   });
 
+  it("a file both a token and an upload is attached once, as the token", async () => {
+    const conv = await createConv(req, orgId, agentId);
+    const f = await file("a.png", "image/png", "draft");
+    const res = await send(conv, {
+      text: `see ${M}`,
+      tokens: [{ type: "file", id: f }],
+      files: [f],
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const [m] = await userMessages(conv);
+    expect(texts(m)).toEqual(["see [file: a.png]", "[file: a.png]", "<image>"]);
+  });
+
+  it("file tokens and uploads over the per-message cap are refused before any remote read", async () => {
+    const conv = await createConv(req, orgId, agentId);
+    const c = await connector(docs, { name: "Slack", slug: "slack" });
+    const ups = [await file("u.png", "image/png", "draft")];
+    const tokens = [
+      ...Array.from({ length: 10 }, () => ({ type: "file", id: randomUUID() })),
+      { type: "resource", connectorId: c, uri: "doc://send" },
+    ];
+    const before = docs.requests.length;
+    const res = await send(conv, { text: M.repeat(tokens.length), tokens, files: ups });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(errOf(res)).toMatchObject({
+      code: "validation_failed",
+      details: [{ path: "files", message: "At most 10 files per message" }],
+    });
+    expect(docs.requests.length).toBe(before);
+    expect(await userMessages(conv)).toHaveLength(0);
+  });
+
   it("upload-only message starts with a file line", async () => {
     const conv = await createConv(req, orgId, agentId);
     const up = await file("b.pdf", "application/pdf", "draft");
@@ -680,7 +765,7 @@ describe("order, offsets, skills, retries", () => {
       expect(t[0]?.slice(e.start, e.end)).toMatch(/^\[[a-z ]+: .*\]$/);
       expect(t[0]?.slice(e.start, e.end)).toContain(e.label);
     }
-    expect(inline[3]?.ref).toEqual({ path: "./src/app.ts" });
+    expect(inline[3]?.ref).toEqual({ path: "src/app.ts" });
     expect(inline[0]?.ref).toEqual({ fileId: lib });
   });
 
@@ -745,6 +830,51 @@ describe("order, offsets, skills, retries", () => {
     expect(docs.requests.length).toBe(before);
     expect(forAgent).not.toHaveBeenCalled();
     expect(await userMessages(conv)).toHaveLength(1);
+  });
+
+  it("on create with realistic thresholds: no tool search sentence, the keys still recorded", async () => {
+    await toolSearch("on");
+    const config = k.app.get(KernelConfigService);
+    const real = config.get();
+    vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      tools: { ...real.tools, searchThresholdTools: 30, searchThresholdTokens: 8000 },
+    });
+    const c = await connector(chat, { name: "Slack", slug: "slack" });
+    const created = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: {
+        agentId,
+        message: {
+          text: `${M} hi`,
+          clientMessageId: "real-1",
+          tokens: [{ type: "connector", connectorId: c }],
+        },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const id = (created.json() as { conversation: { id: string } }).conversation.id;
+    const [m] = await userMessages(id);
+    expect(texts(m)[1]).toBe(
+      '[connector: Slack] The person named the connector "Slack" for this message. Its tools are named mcp__slack__<tool>.',
+    );
+    expect([...(m?.payload.connectorMentions?.[0]?.loadedTools ?? [])].sort()).toEqual([
+      "mcp__slack__search",
+      "mcp__slack__write",
+    ]);
+  });
+
+  it("the mention text folds the connector name", async () => {
+    const conv = await createConv(req, orgId, agentId);
+    const c = await connector(chat, { name: "Team [ops]\nchat", slug: "team" });
+    const res = await send(conv, { text: M, tokens: [{ type: "connector", connectorId: c }] });
+    expect(res.statusCode, res.body).toBe(202);
+    const [m] = await userMessages(conv);
+    expect(texts(m)[1]).toMatch(
+      /^\[connector: Team \(ops\) chat\] The person named the connector "Team \(ops\) chat" for/,
+    );
+    expect(m?.payload.connectorMentions?.[0]?.name).toBe("Team [ops]\nchat");
   });
 
   it("create and first-message forward tokens", async () => {

@@ -364,6 +364,8 @@ export const PERSON_MESSAGES_READ = 20;
  * quoted material, not the person's intent. A message with inline tokens (composer inline tokens
  * spec §3.3) keeps that layout: its placeholders stand in `content[0]`, and its connector mention
  * blocks and `[file: …]` lines come after the referenced conversations, so they are skipped too.
+ * An upload-only message has no typed text: its `content[0]` is the first file's `[file: <name>]`
+ * line, which is read as its words (a file name, harmless to the verdict).
  */
 function textOfUserMessage(payload: unknown): string {
   const p = payload as { content?: unknown; attachments?: unknown; projectFiles?: unknown } | null;
