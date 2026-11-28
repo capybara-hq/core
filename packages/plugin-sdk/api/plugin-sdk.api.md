@@ -1132,7 +1132,9 @@ export type DeviceAccessErrorCode = "no_device" | "provider_unavailable" | "capa
 */
 | "loopback_unavailable"
 /** The service already holds `LOOPBACK_MAX_PORTS_PER_SERVICE` live loopback port grants. */
-| "loopback_limit";
+| "loopback_limit"
+/** A malformed argument (a loopback port that is not an integer from 1 to 65535). */
+| "invalid_request";
 
 // @public
 export type DeviceAccessScope = {

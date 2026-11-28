@@ -251,14 +251,23 @@ export interface DeviceAccessCtx {
   /**
    * Grants the service one loopback port of the device (`LOOPBACK_GRANT_HOSTS` on `port`) for the
    * scope conversation's tree: the grant is held by the conversation's root, so its sub-agents
-   * share it. Owner only (the person's own click in the panel; needs
-   * `permissions.deviceAccess.loopbackPorts`, else `loopback_not_declared`). The same ceilings as
-   * an outside-sandbox escalation apply (platform, org, device and owner settings, an attended
-   * run, a provider that supports loopback ports): refused with `loopback_unavailable`; more than
-   * `LOOPBACK_MAX_PORTS_PER_SERVICE` live ports refuse with `loopback_limit`. Recorded with source
-   * `owner-panel`; the grant lives 24 hours (or until revoked, the conversation is deleted or the
-   * outside-sandbox setting is switched off), and the running service is refreshed with it.
-   * Granting a live port again answers the existing grant.
+   * share it. For the person's own click in the extension's panel (needs
+   * `permissions.deviceAccess.loopbackPorts`, else `loopback_not_declared`; a port outside
+   * 1–65535 is `invalid_request`).
+   *
+   * What the kernel checks: `scope.accountId` owns the conversation, its root and the root's
+   * personal device; the call is not made inside a run's tool step; the tree is not unattended by
+   * the kernel's records (an automation's conversation, or an automation run active in it now);
+   * the device's runtime can run outside its sandbox now, and the outside-sandbox ceilings
+   * (platform, org, device and owner settings) and the provider's loopback support allow it. Any
+   * of these refuses with `loopback_unavailable`; more than `LOOPBACK_MAX_PORTS_PER_SERVICE` live
+   * ports refuse with `loopback_limit`. The kernel cannot verify that a person clicked: beyond
+   * these checks, the owner-panel path rests on the extension, governed by the blocking approval
+   * of `permissions.deviceAccess.loopbackPorts`.
+   *
+   * Recorded with source `owner-panel`; the grant lives 24 hours (or until revoked, the
+   * conversation is deleted or the outside-sandbox setting is switched off), and the running
+   * service is refreshed with it. Granting a live port again answers the existing grant.
    */
   grantLoopbackPort(
     scope: DeviceAccessScope & { service: string; port: number },
@@ -323,7 +332,9 @@ export type DeviceAccessErrorCode =
    */
   | "loopback_unavailable"
   /** The service already holds `LOOPBACK_MAX_PORTS_PER_SERVICE` live loopback port grants. */
-  | "loopback_limit";
+  | "loopback_limit"
+  /** A malformed argument (a loopback port that is not an integer from 1 to 65535). */
+  | "invalid_request";
 
 /** A {@link DeviceAccessCtx} call was refused; the message is actionable English for the model. */
 export class DeviceAccessError extends Error {

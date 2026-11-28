@@ -13,6 +13,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -24,6 +25,7 @@ import {
 } from "../../src/device-access/device-access.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../../src/sandbox/unreachable.js";
@@ -75,6 +77,7 @@ const FAKE_DEVICE_ACCESS = fileURLToPath(
 );
 const ECHO_TOOL = "plugin__fake-device-access__echo";
 const HANDOFF_TOOL = "plugin__fake-device-access__handoff";
+const GRANT_TOOL = "plugin__fake-device-access__grant";
 const CALLER: DeviceAccessCaller = {
   extension: "fake-device-access",
   services: ["echo"],
@@ -1572,10 +1575,12 @@ describe("ctx.deviceAccess loopback port grants", () => {
     expect((await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 5432 })).database).toBe(
       true,
     );
-    // not a port
-    await expect(access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 70000 })).rejects.toThrow(
-      TypeError,
-    );
+    // not a port: a refusal the SDK's error union names
+    for (const port of [70000, 0, 39.5])
+      expect(await refusal(access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port }))).toEqual({
+        code: "invalid_request",
+        message: `${port} is not a port: a loopback port is an integer from 1 to 65535.`,
+      });
   });
 
   it("refuses a non-owner", async () => {
@@ -1645,7 +1650,16 @@ describe("ctx.deviceAccess loopback port grants", () => {
     await access.ensureService(CALLER, callOf(), echoServiceSpec());
     await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
     const from = await sentCount();
+    // the revoke's own send, told from an owed refresh job's by its caller
+    const direct: string[] = [];
+    const services = k.app.get(DeviceServices);
+    const original = services.refreshLoopback.bind(services);
+    vi.spyOn(services, "refreshLoopback").mockImplementation(async (...args) => {
+      if (new Error().stack?.includes("DeviceAccessService.refreshLoopback")) direct.push(args[2]);
+      return original(...args);
+    });
     await access.revokeLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
+    expect(direct).toEqual([ID]);
     expect(await access.loopbackPorts(LOOPBACK, scopeOf())).toEqual([]);
     // the revoke's own send went last (a send of the older set in flight, the grant's owed
     // refresh, lands before it: the per-service lock orders them)
@@ -1657,5 +1671,104 @@ describe("ctx.deviceAccess loopback port grants", () => {
     expect(audits[0]?.detail).toMatchObject({ port: 3999, reason: "revoked" });
     // revoking what is not granted succeeds
     await access.revokeLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
+  });
+
+  it("refuses an unattended tree; an attended tree is granted", async () => {
+    const UNATTENDED =
+      "this is an unattended run (an automation) where no one can approve a local port";
+    const store = new AutomationStore();
+    // an automation's conversation
+    const task = await store.insertTask(db, {
+      id: randomUUID(),
+      orgId,
+      accountId: s.accountId,
+      agentId: s.agentId,
+      name: "nightly",
+      prompt: "nightly",
+      trigger: { kind: "cron", expr: "*/5 * * * *", timeZone: "UTC" },
+      mode: "new",
+      conversationId: null,
+      chat: null,
+      model: null,
+      effort: null,
+      deviceId: null,
+      status: "paused",
+      nextRunAt: null,
+      jitterSeconds: 0,
+      expiresAt: null,
+    } satisfies AutomationInsert);
+    const scheduled = await createConv(s.req, orgId, s.agentId);
+    await db
+      .updateTable("conversations")
+      .set({ device_id: s.deviceId, automation_id: task.id })
+      .where("id", "=", scheduled)
+      .execute();
+    const r = await refusal(
+      access.grantLoopbackPort(LOOPBACK, { ...scopeOf({ conversationId: scheduled }), port: 3999 }),
+    );
+    expect(r.code).toBe("loopback_unavailable");
+    expect(r.message).toContain(UNATTENDED);
+    // a person's conversation while an automation's run is active in it (no person joined)
+    const taskRun = await store.insertRun(db, {
+      id: randomUUID(),
+      taskId: task.id,
+      orgId,
+      scheduledFor: new Date(),
+      trial: false,
+    });
+    expect(taskRun).not.toBeNull();
+    const runId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: s.conversationId,
+        status: "waiting",
+        agent_version: 1,
+        trigger_account_id: s.accountId,
+        trigger_seq: 0,
+        automation_run_id: taskRun?.id ?? null,
+      })
+      .execute();
+    try {
+      const busy = await refusal(access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 }));
+      expect(busy.code).toBe("loopback_unavailable");
+      expect(busy.message).toContain(UNATTENDED);
+    } finally {
+      await db.updateTable("runs").set({ status: "completed" }).where("id", "=", runId).execute();
+    }
+    // attended again: granted
+    expect((await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 })).port).toBe(
+      3999,
+    );
+    expect(await auditsOf("device.loopback_granted")).toHaveLength(1);
+  });
+
+  it("refuses a grant made from inside a tool call", async () => {
+    await postMessage(s.req, orgId, s.conversationId, `tool:${GRANT_TOOL}:{"port":4000}`);
+    await waitForTerminal(db, s.conversationId, 1, 30_000);
+    const [r] = ofType(await eventsOf(db, s.conversationId), "tool_result").map((e) => e.payload);
+    expect(r?.content).toContain("loopback_unavailable: Port 4000 on the device cannot be opened");
+    expect(r?.content).toContain("a tool call cannot grant a local port as the owner's panel");
+    expect(await auditsOf("device.loopback_granted")).toHaveLength(0);
+  });
+
+  it("refuses while the device's runtime cannot run outside its sandbox", async () => {
+    const facts = k.app.get(PermissionFacts);
+    const original = facts.deviceSandboxFacts.bind(facts);
+    vi.spyOn(facts, "deviceSandboxFacts").mockImplementation(async (...args) => ({
+      ...(await original(...args)),
+      availability: {
+        state: "unsupported" as const,
+        reason: "Seatbelt is missing",
+        cause: { kind: "runtime" as const },
+      },
+    }));
+    const r = await refusal(access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 }));
+    expect(r.code).toBe("loopback_unavailable");
+    expect(r.message).toContain(
+      "running outside the sandbox is not possible here (this device cannot run commands outside its sandbox now (Seatbelt is missing))",
+    );
+    expect(await auditsOf("device.loopback_granted")).toHaveLength(0);
   });
 });

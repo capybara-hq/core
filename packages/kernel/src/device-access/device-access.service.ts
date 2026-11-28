@@ -20,6 +20,7 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
+import { unattendedRunOf } from "../automations/unattended.js";
 import type { ReviewRecord } from "../conversations/events.js";
 import { DeviceAccess } from "../devices/access.js";
 import { ConversationDevices } from "../devices/conversation-devices.js";
@@ -33,6 +34,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import { currentExecutionClaim } from "../runtime/run-execution.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import { assertServiceSpec, DeviceServices } from "../sandbox/device-services.js";
 import {
@@ -42,10 +44,17 @@ import {
   LoopbackGrants,
   loopbackRefusal,
 } from "../sandbox/loopback-grants.js";
+import {
+  type PermissionAvailability,
+  runtimeReportVerdict,
+} from "../sandbox/permission-availability.js";
 import { PermissionFacts } from "../sandbox/permission-facts.js";
 import { DeviceProviders } from "../sandbox/providers.js";
-import { escalationCeilingWhy } from "../sandbox/review/permission-candidate.js";
-import { CommandReviewService } from "../sandbox/review/review.service.js";
+import {
+  escalationCeilingWhy,
+  escalationRuntimeWhy,
+} from "../sandbox/review/permission-candidate.js";
+import { CommandReviewService, LOOPBACK_UNATTENDED_WHY } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
 import { mapSandboxError } from "../tools/builtins/sandbox/common.js";
 import {
@@ -594,23 +603,39 @@ export class DeviceAccessService {
     scope: DeviceAccessScope & { service: string; port: number },
   ): Promise<LoopbackGrantView> {
     const { d, key } = await this.loopbackKey(caller, scope, scope.port);
-    const facts = await this.facts.deviceSandboxFacts(d.orgId, d.deviceId);
-    // the person is at the panel (attended): only the device's outside-sandbox ceiling decides,
-    // in the words a per-call escalation is refused with
-    const escalation = facts.box.outsideSandbox
-      ? null
-      : escalationCeilingWhy({
-          layer: facts.box.layer.outsideSandbox,
-          boundary: facts.box.boundary,
-          description: facts.description,
-          changeHint: facts.changeHint,
-        });
-    const why = loopbackRefusal(facts.box, facts.support, escalation);
-    if (why !== null)
-      throw new DeviceAccessError(
+    const unavailable = (why: string) =>
+      new DeviceAccessError(
         "loopback_unavailable",
         `Port ${scope.port} on the device cannot be opened to the device service ${scope.service}: ${why}.`,
       );
+    // a panel click never happens inside a run's execution: a tool step granting itself a port
+    // as the owner's panel is refused (its refusal reported with reportBlockedHosts asks instead)
+    if (currentExecutionClaim() !== undefined)
+      throw unavailable(
+        "a tool call cannot grant a local port as the owner's panel; report the refused port with ctx.deviceAccess.reportBlockedHosts so the conversation's permission profile decides",
+      );
+    // the kernel's own record of the tree's origin: an automation's conversation, or a run of an
+    // automation active in it now, has no one to grant a port (the ask's unattended refusal)
+    if (await this.unattendedTree(d)) throw unavailable(LOOPBACK_UNATTENDED_WHY);
+    const facts = await this.facts.deviceSandboxFacts(d.orgId, d.deviceId);
+    // the escalation refusal previewCall gives an attended call: the runtime cannot run anything
+    // outside its sandbox now, else the device's outside-sandbox ceiling, in the same words
+    const runtime = runtimeWhy(facts.availability);
+    const escalation =
+      runtime !== null
+        ? escalationRuntimeWhy(runtime)
+        : facts.box.outsideSandbox
+          ? null
+          : escalationCeilingWhy({
+              layer: facts.box.layer.outsideSandbox,
+              boundary: facts.box.boundary,
+              description: facts.description,
+              changeHint: facts.changeHint,
+            });
+    // the ceilings are read before the grant's transaction: a ceiling switched off meanwhile owes
+    // a refresh whose job revokes the grant (`LoopbackGrants.refresh`), so the window is bounded
+    const why = loopbackRefusal(facts.box, facts.support, escalation);
+    if (why !== null) throw unavailable(why);
     let row: LoopbackGrantRow;
     try {
       row = await this.grantInTx(key, scope.accountId);
@@ -670,7 +695,8 @@ export class DeviceAccessService {
       );
     assertDeclared(caller, scope.service);
     if (port !== null && !(Number.isInteger(port) && port >= 1 && port <= 65535))
-      throw new TypeError(
+      throw new DeviceAccessError(
+        "invalid_request",
         `${String(port)} is not a port: a loopback port is an integer from 1 to 65535.`,
       );
     const d = await this.scopedDevice(caller, scope);
@@ -684,6 +710,36 @@ export class DeviceAccessService {
         port: port ?? 0,
       },
     };
+  }
+
+  /**
+   * Whether the scope's tree is unattended now, by the kernel's own records: its root is an
+   * automation's conversation (`automation_id`), or a run of the scope conversation or its root
+   * that has not ended serves an automation run with no person joined (`unattendedRunOf`; a trial
+   * run is attended).
+   */
+  private async unattendedTree(d: ScopedDevice): Promise<boolean> {
+    const root = await this.db
+      .selectFrom("conversations")
+      .select("automation_id")
+      .where("id", "=", d.rootConversationId)
+      .where("org_id", "=", d.orgId)
+      .executeTakeFirst();
+    if (root?.automation_id != null) return true;
+    const runs = await this.db
+      .selectFrom("runs as r")
+      .innerJoin("conversations as c", "c.id", "r.conversation_id")
+      .select("r.id")
+      .where("c.org_id", "=", d.orgId)
+      .where("r.conversation_id", "in", [d.conversationId, d.rootConversationId])
+      .where("r.status", "in", ["queued", "running", "waiting"])
+      .where("r.automation_run_id", "is not", null)
+      .execute();
+    for (const r of runs) {
+      const run = await unattendedRunOf(this.db, this.config, d.orgId, r.id);
+      if (run !== null && !run.trial) return true;
+    }
+    return false;
   }
 
   /**
@@ -1022,6 +1078,18 @@ export class DeviceAccessService {
   private rootOf(conversationId: string): Promise<string> {
     return rootConversationOf(this.db, conversationId);
   }
+}
+
+/**
+ * Why the device's runtime cannot run anything outside its sandbox now, or null: a runtime that
+ * cannot enforce its sandbox (`unsupported`, or a report whose verdict refuses). A device not
+ * started yet (`unprobed`) is not refused: the grant reaches it with its next start, where its
+ * provider's support is checked again.
+ */
+function runtimeWhy(availability: PermissionAvailability): string | null {
+  if (availability.state === "unsupported") return availability.reason;
+  if (availability.state === "supported") return runtimeReportVerdict(availability.report);
+  return null;
 }
 
 /** A grant record as the extension sees it. */

@@ -60,6 +60,9 @@ const REFUSED_ITEM = {
  *   invocation's report (service `echo`; the extension declares
  *   `permissions.deviceAccess.loopbackPorts`).
  * - `echo` starts the echo service and answers its echo of `text`.
+ * - `grant` calls `ctx.deviceAccess.grantLoopbackPort` for `port` from inside the tool call (as
+ *   the call's account and conversation) and answers the refusal as `<code>: <message>`, or
+ *   `granted <port>`.
  * - `handoff` asks the person (`InputRequired`, one boolean field `done`) and answers what they
  *   said; with `service: true` it first starts and asks the echo service (a launch reviewed in
  *   the round that asks), and with `blocked` it also reports those hosts refused in that round.
@@ -99,7 +102,7 @@ export default defineExtension({
   sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: {
-    tools: ["navigate", "echo", "handoff"],
+    tools: ["navigate", "echo", "handoff", "grant"],
     deviceAccess: { services: ["echo"], loopbackPorts: true },
   },
   setup(ctx: ExtensionContext) {
@@ -170,6 +173,33 @@ export default defineExtension({
         },
       },
       async (input, call) => text(await echo(call, (input as { text: string }).text)),
+    );
+    ctx.tools.register(
+      {
+        name: "grant",
+        description: "Test only: grants a local port of the device from inside the tool call.",
+        defaultPolicy: "allow",
+        inputSchema: {
+          type: "object",
+          properties: { port: { type: "number" } },
+          required: ["port"],
+        },
+      },
+      async (input, call) => {
+        try {
+          const g = await ctx.deviceAccess.grantLoopbackPort({
+            orgId: call.orgId,
+            accountId: call.accountId,
+            conversationId: call.conversationId,
+            service: "echo",
+            port: (input as { port: number }).port,
+          });
+          return text(`granted ${g.port}`);
+        } catch (e) {
+          const err = e as { code?: string; message?: string };
+          return text(`${err.code ?? "error"}: ${err.message ?? String(e)}`);
+        }
+      },
     );
     ctx.tools.register(
       {
