@@ -354,7 +354,9 @@ export interface OrgDeletedPayload {
  * - `offer_declined`: directed work was not run (`reason`): the person's rule is `off`, the person
  *   `declined` the offer, their acceptance automation is `paused`, the offer `expired` unanswered
  *   (seven days), or the event stayed `undelivered` (the kernel gave up routing it). No run and no
- *   conversation: `accountId` and `agentId` are the event's audience.
+ *   conversation: `accountId` and `agentId` are the event's audience; `eventId` and `dedupeKey`
+ *   name the event the decline is for, so a plugin can tell a stale decline (an older event of
+ *   the subject) from one for its latest.
  */
 export interface RunLifecyclePayload {
   orgId: string;
@@ -374,6 +376,12 @@ export interface RunLifecyclePayload {
   waitingOn?: "approval" | "input";
   /** Set for `offer_declined`. */
   reason?: RunLifecycleDeclineReason;
+  /** Set for `offer_declined`: the kernel's id of the directed event that was not run. */
+  eventId?: string;
+  /**
+   * Set for `offer_declined`: the `dedupeKey` the plugin gave that event in `ctx.triggers.emit`.
+   */
+  dedupeKey?: string;
 }
 
 /** Why directed work was not run (`run.lifecycle` `offer_declined`). */

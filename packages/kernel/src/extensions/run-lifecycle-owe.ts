@@ -126,7 +126,9 @@ export async function oweRunLifecycleFor(
 
 /**
  * Owes `run.lifecycle` `offer_declined` to `plugin` (the plugin that emitted the directed event
- * `eventId`), in the caller's transaction. Nothing when the plugin does not subscribe in the org.
+ * `eventId`, emitted with `dedupeKey`), in the caller's transaction; the payload names the event so
+ * the plugin can tell a stale decline from one for its latest event. Nothing when the plugin does
+ * not subscribe in the org.
  */
 export async function oweOfferDeclinedIn(
   db: KernelSchemaDb,
@@ -135,6 +137,7 @@ export async function oweOfferDeclinedIn(
     orgId: string;
     plugin: string;
     eventId: string;
+    dedupeKey: string;
     accountId: string;
     agentId: string;
     subject: { kind: string; id: string };
@@ -152,6 +155,8 @@ export async function oweOfferDeclinedIn(
       phase: "offer_declined",
       subject: { kind: a.subject.kind, id: a.subject.id },
       reason: a.reason,
+      eventId: a.eventId,
+      dedupeKey: a.dedupeKey,
     },
     runLifecycleJobId({ id: a.eventId, phase: "offer_declined" }),
   );

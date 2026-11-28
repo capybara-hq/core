@@ -395,7 +395,7 @@ export class TriggerEventSweepJob {
       .where("org_id", "=", orgId)
       .where("id", "=", eventId)
       .where("state", "=", "pending")
-      .returning(["plugin", "audience", "subject"])
+      .returning(["plugin", "dedupe_key", "audience", "subject"])
       .executeTakeFirst();
     if (r === undefined) return false;
     if (r.audience !== null) {
@@ -403,6 +403,7 @@ export class TriggerEventSweepJob {
         orgId,
         plugin: r.plugin,
         eventId,
+        dedupeKey: r.dedupe_key,
         accountId: r.audience.accountId,
         agentId: r.audience.agentId,
         subject: r.subject,
