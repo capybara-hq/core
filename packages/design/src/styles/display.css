@@ -1169,11 +1169,22 @@
 }
 
 /* 插件嵌入页：宽度撑满，高度由属性给定 */
+/*
+ * `color-scheme: normal`, never the dark theme's inherited `dark`: when the frame's color scheme
+ * differs from its document's, the browser paints an opaque canvas in the document's scheme, and an
+ * embed document declares none before the bridge's `init` tells it the theme, so a dark frame would
+ * paint it white. A normal frame leaves the canvas transparent: the ground below shows.
+ */
 .cb-embed {
   display: block;
   width: 100%;
   border: 1px solid var(--cb-line);
   background: var(--cb-panel);
+  color-scheme: normal;
+}
+/* Until the first load the frame is hidden (the initial blank document is light): see embed.tsx. */
+.cb-embed:not([data-loaded]) {
+  visibility: hidden;
 }
 /* Fill mode (spec §6.9): the remaining height of the flex column it sits in (a pane's body). */
 .cb-embed[data-fill="true"] {
