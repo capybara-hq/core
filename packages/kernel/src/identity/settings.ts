@@ -211,6 +211,7 @@ const COMPACTION_FIELDS = {
   idleEnabled: z.boolean(),
   idleMinTokensFloor: z.number().int().min(50_000).max(2_000_000),
   idleMinWindowRatio: z.number().min(0.1).max(0.9),
+  idleDelayMinutes: z.number().int().min(5).max(1440),
 };
 
 /**
@@ -228,6 +229,7 @@ export const COMPACTION_SETTINGS = z.object({
   idleEnabled: COMPACTION_FIELDS.idleEnabled.default(true),
   idleMinTokensFloor: COMPACTION_FIELDS.idleMinTokensFloor.default(200_000),
   idleMinWindowRatio: COMPACTION_FIELDS.idleMinWindowRatio.default(0.3),
+  idleDelayMinutes: COMPACTION_FIELDS.idleDelayMinutes.default(30),
 });
 
 export type CompactionSettings = z.infer<typeof COMPACTION_SETTINGS>;
@@ -265,6 +267,7 @@ export function effectiveCompactionSettings(
     idleEnabled: org?.idleEnabled ?? platform.idleEnabled,
     idleMinTokensFloor: org?.idleMinTokensFloor ?? platform.idleMinTokensFloor,
     idleMinWindowRatio: org?.idleMinWindowRatio ?? platform.idleMinWindowRatio,
+    idleDelayMinutes: org?.idleDelayMinutes ?? platform.idleDelayMinutes,
   };
 }
 
@@ -1148,6 +1151,8 @@ export class SettingsService {
             compactionPatch.idleMinTokensFloor ?? current.compaction.idleMinTokensFloor,
           idleMinWindowRatio:
             compactionPatch.idleMinWindowRatio ?? current.compaction.idleMinWindowRatio,
+          idleDelayMinutes:
+            compactionPatch.idleDelayMinutes ?? current.compaction.idleDelayMinutes,
         };
       }
       if (promptCachePatch !== undefined) {
