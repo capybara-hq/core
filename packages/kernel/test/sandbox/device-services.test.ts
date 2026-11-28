@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,8 +17,13 @@ import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.j
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
 import { SandboxLockLostError } from "../../src/sandbox/leases.js";
+import { LoopbackLivePorts } from "../../src/sandbox/loopback-live-ports.js";
+import type { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import {
@@ -31,6 +37,7 @@ import {
   holdNextFakeSandboxUpdate,
   readFakeSandboxLimits,
   readFakeSandboxOps,
+  readFakeServiceLoopbackPorts,
   releaseFakeSandboxUpdate,
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -134,6 +141,9 @@ beforeAll(async () => {
 
 let svc: SandboxService;
 let services: DeviceServices;
+let locks: LockService;
+/** Whether the stubbed device's ceilings allow running outside the sandbox. */
+let loopbackAdmitted: boolean;
 
 afterAll(async () => {
   redis?.disconnect();
@@ -169,7 +179,21 @@ beforeEach(async () => {
   seed = await seedConversation(raw);
   deviceId = await seedDevice(raw, seed.orgId, seed.accountId);
   svc = service();
-  services = new DeviceServices(svc);
+  // the live loopback ports read straight from the test's schema view (no transaction context)
+  const kdb = Object.create(KernelDb.prototype, { db: { value: db } }) as KernelDb;
+  locks = new LockService(redis, createLogger("error"));
+  loopbackAdmitted = true;
+  const facts = {
+    deviceSandboxFacts: async () => ({
+      box: {
+        outsideSandbox: loopbackAdmitted,
+        loopbackPorts: loopbackAdmitted,
+        layer: { outsideSandbox: loopbackAdmitted ? null : "org" },
+      },
+      support: null,
+    }),
+  } as unknown as Pick<PermissionFacts, "deviceSandboxFacts">;
+  services = new DeviceServices(svc, new LoopbackLivePorts(kdb), locks, facts);
 });
 
 describe("device services", () => {
@@ -300,6 +324,113 @@ describe("device services", () => {
     expect(seen[0]?.spec).toEqual(nameOnly);
     expect(seen[1]?.spec).toEqual(spec());
     expect(seen[2]?.spec).toEqual(nameOnly);
+  });
+
+  it("sends the live set with every ensure", async () => {
+    const grant = async (port: number, over: { expired?: boolean; revoked?: boolean } = {}) =>
+      sql`INSERT INTO capybara.device_loopback_grants
+        (id, org_id, device_id, service_id, conversation_id, port, source, expires_at,
+         revoked_at, revoke_reason)
+        VALUES (${randomUUID()}, ${seed.orgId}, ${deviceId}, 'fake-ext.echo', ${seed.conversationId},
+          ${port}, 'owner-panel',
+          ${over.expired ? sql`now() - interval '1 second'` : sql`now() + interval '1 hour'`},
+          ${over.revoked ? sql`now()` : null}, ${over.revoked ? "revoked" : null})`.execute(raw);
+    await services.ensure(use(), spec(), signal());
+    await grant(3999);
+    // neither an expired nor a revoked grant is live
+    await grant(4000, { expired: true });
+    await grant(4001, { revoked: true });
+    await services.ensure(use(), spec(), signal());
+    await services.ensure(use(), spec(), signal(), { ifRunning: true });
+    await grant(3000);
+    expect(
+      await services.refreshLoopback(seed.orgId, deviceId, "fake-ext.echo", signal()),
+    ).toMatchObject({ state: "running" });
+    await sql`UPDATE capybara.device_loopback_grants SET revoked_at = now(), revoke_reason = 'revoked'`.execute(
+      raw,
+    );
+    await services.refresh(use(), "fake-ext.echo", signal());
+    expect(await readFakeServiceLoopbackPorts(root)).toEqual([
+      [],
+      [3999],
+      [3999],
+      [3000, 3999],
+      [],
+    ]);
+    // the refresh of a loopback change applies no limits (no update of the instance)
+    expect((await readFakeSandboxOps(root)).filter((o) => o[0] === "update")).toEqual([]);
+  });
+
+  it("leaves the set out when it is empty or a ceiling refuses loopback ports", async () => {
+    const sent: (readonly number[] | undefined)[] = [];
+    const ensure = provider.ensureService?.bind(provider);
+    if (!ensure) throw new Error("device-fake has services");
+    provider.ensureService = async (h, sp, sig, opts) => {
+      sent.push(opts?.loopbackPorts);
+      return ensure(h, sp, sig, opts);
+    };
+    await services.ensure(use(), spec(), signal());
+    await sql`INSERT INTO capybara.device_loopback_grants
+      (id, org_id, device_id, service_id, conversation_id, port, source, expires_at)
+      VALUES (${randomUUID()}, ${seed.orgId}, ${deviceId}, 'fake-ext.echo', ${seed.conversationId},
+        3999, 'owner-panel', now() + interval '1 hour')`.execute(raw);
+    await services.ensure(use(), spec(), signal());
+    // the org closed running outside the sandbox
+    loopbackAdmitted = false;
+    await services.ensure(use(), spec(), signal());
+    await services.refreshLoopback(seed.orgId, deviceId, "fake-ext.echo", signal());
+    expect(sent).toEqual([undefined, [3999], undefined, undefined]);
+  });
+
+  it("a send of an older set never reaches the device after a newer one", async () => {
+    await services.ensure(use(), spec(), signal());
+    await sql`INSERT INTO capybara.device_loopback_grants
+      (id, org_id, device_id, service_id, conversation_id, port, source, expires_at)
+      VALUES (${randomUUID()}, ${seed.orgId}, ${deviceId}, 'fake-ext.echo', ${seed.conversationId},
+        3999, 'owner-panel', now() + interval '1 hour')`.execute(raw);
+    // the grant's refresh reads {3999} and its send is held at the device
+    const ensure = provider.ensureService?.bind(provider);
+    if (!ensure) throw new Error("device-fake has services");
+    const done: number[][] = [];
+    let entered!: () => void;
+    const held = new Promise<void>((r) => {
+      entered = r;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let first = true;
+    provider.ensureService = async (h, sp, sig, opts) => {
+      const ports = [...(opts?.loopbackPorts ?? [])];
+      if (first) {
+        first = false;
+        entered();
+        await gate;
+      }
+      const r = await ensure(h, sp, sig, opts);
+      done.push(ports);
+      return r;
+    };
+    const grantSend = services.refreshLoopback(seed.orgId, deviceId, "fake-ext.echo", signal());
+    await held;
+    // the revoke commits, and its refresh waits for the set lock the grant's send holds
+    await sql`UPDATE capybara.device_loopback_grants SET revoked_at = now(), revoke_reason = 'revoked'`.execute(
+      raw,
+    );
+    const waiting = new Promise<void>((resolve) => {
+      const acquire = locks.acquire.bind(locks);
+      vi.spyOn(locks, "acquire").mockImplementation(async (key, o) => {
+        resolve();
+        return acquire(key, o);
+      });
+    });
+    const revokeSend = services.refreshLoopback(seed.orgId, deviceId, "fake-ext.echo", signal());
+    await waiting;
+    release();
+    await Promise.all([grantSend, revokeSend]);
+    // the newer set (read after the older send finished) lands last
+    expect(done).toEqual([[3999], []]);
   });
 });
 

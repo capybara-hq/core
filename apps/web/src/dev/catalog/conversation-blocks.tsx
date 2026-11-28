@@ -536,6 +536,7 @@ export function toRow(
     ...(o.blockedBy ? { blockedBy: o.blockedBy } : t.error ? { error: t.error } : {}),
     ...(t.outsideSandbox ? { outsideSandbox: true } : {}),
     ...(t.autoGranted ? { autoGranted: t.autoGranted } : {}),
+    ...(t.autoGrantedPort !== undefined ? { autoGrantedPort: t.autoGrantedPort } : {}),
     ...(t.approvedBy ? { approvedBy: t.approvedBy } : {}),
     ...(Object.keys(detail).length > 0 ? { detail } : {}),
   };

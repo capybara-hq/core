@@ -106,6 +106,7 @@ const DEFAULT_COMPACTION = {
   idleEnabled: true,
   idleMinTokensFloor: 200_000,
   idleMinWindowRatio: 0.3,
+  idleDelayMinutes: 30,
 };
 
 const errCode = (res: { json(): unknown }) =>
@@ -755,10 +756,23 @@ describe("超级管理员端点", () => {
     });
     expect((await put({ idleEnabled: true })).statusCode).toBe(200);
 
+    // the idle delay is stored and read back with the other fields unchanged
+    expect((await put({ idleDelayMinutes: 60 })).statusCode).toBe(200);
+    expect(await read()).toEqual({
+      ...DEFAULT_COMPACTION,
+      threshold: 0.7,
+      keepRecentTurns: 2,
+      idleDelayMinutes: 60,
+    });
+    expect((await put({ idleDelayMinutes: 30 })).statusCode).toBe(200);
+
     for (const compaction of [
       { idleMinTokensFloor: 49_999 },
       { idleMinTokensFloor: 2_000_001 },
       { idleMinWindowRatio: 0.95 },
+      { idleDelayMinutes: 4 },
+      { idleDelayMinutes: 1441 },
+      { idleDelayMinutes: 30.5 },
       { idleEnable: false },
       { threshold: 0.49 },
       { threshold: 0.96 },

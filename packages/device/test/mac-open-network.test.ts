@@ -621,3 +621,48 @@ it.runIf(darwin)("the unwrapped branch runs only for the escalated pair", async 
     run("true", { full: true, openNetwork: false, readRoots: ["/"], writeRoots: ["/"] }, { scope }),
   ).rejects.toThrow(/escalated/);
 });
+
+it.runIf(darwin)(
+  "reaches a granted loopback port from a restricted exec and not another",
+  async () => {
+    // a second listener on another loopback port, never granted
+    const other = createServer((_req, res) => res.end("other-response"));
+    await new Promise<void>((r) => other.listen(0, "127.0.0.1", r));
+    try {
+      const address = other.address();
+      if (!address || typeof address === "string") throw Error("Missing fixture port");
+      const urls = {
+        granted: `http://127.0.0.1:${port}/granted`,
+        grantedName: `http://localhost:${port}/granted-name`,
+        other: `http://127.0.0.1:${address.port}/other`,
+        otherName: `http://localhost:${address.port}/other-name`,
+        loopbackOther: `http://127.0.0.2:${port}/loopback-other`,
+      };
+      // a device service's grant: an allowlist network (no host) and the open network alike
+      for (const grant of [
+        { openNetwork: false, hosts: [], loopbackPorts: [port] },
+        { openNetwork: true, loopbackPorts: [port] },
+      ]) {
+        receipts.length = 0;
+        const result = await run(probes(urls), grant);
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(statuses(result.stdout), result.stdout).toEqual({
+          granted: "200",
+          grantedName: "200",
+          other: "403",
+          otherName: "403",
+          loopbackOther: "403",
+        });
+        expect(receipts).toEqual(["/granted", "/granted-name"]);
+      }
+      // without the grant the same port stays closed
+      receipts.length = 0;
+      const closed = await run(probes({ granted: urls.granted }), { openNetwork: false });
+      expect(statuses(closed.stdout)).toEqual({ granted: "403" });
+      expect(receipts).toEqual([]);
+    } finally {
+      other.closeAllConnections();
+      await new Promise<void>((r) => other.close(() => r()));
+    }
+  },
+);

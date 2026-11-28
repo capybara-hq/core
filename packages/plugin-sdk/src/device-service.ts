@@ -31,6 +31,43 @@
  * and the conversation-deleted notice ({@link encodeConversationDeleted}).
  */
 
+import { LOOPBACK_MAX_PORTS_PER_SERVICE } from "./device-provider.js";
+
+/**
+ * The network a device service runs under (`service.ensure`): the device's network setting plus
+ * the service's live loopback port grants, which let it reach the loopback grant hosts
+ * (`LOOPBACK_GRANT_HOSTS`) on exactly those ports. The set is always sent whole, so an absent or
+ * empty one closes every loopback port again.
+ */
+export interface DeviceServiceNetwork {
+  kind: "open-public" | "allowlist";
+  hosts: string[];
+  /**
+   * Live granted loopback ports, sorted ascending, unique, 1–65535, at most
+   * {@link LOOPBACK_MAX_PORTS_PER_SERVICE}.
+   */
+  loopbackPorts?: number[];
+}
+
+/**
+ * Strictly parses a set of loopback ports ({@link DeviceServiceNetwork.loopbackPorts}): an array
+ * of unique integers 1–65535, at most {@link LOOPBACK_MAX_PORTS_PER_SERVICE}; returns a sorted
+ * copy. Throws a `TypeError` naming `what` otherwise.
+ */
+export function parseLoopbackPorts(value: unknown, what: string): number[] {
+  if (!Array.isArray(value)) throw new TypeError(`${what} must be an array of ports`);
+  if (value.length > LOOPBACK_MAX_PORTS_PER_SERVICE)
+    throw new TypeError(`${what} lists at most ${LOOPBACK_MAX_PORTS_PER_SERVICE} ports`);
+  const seen = new Set<number>();
+  for (const p of value) {
+    if (typeof p !== "number" || !Number.isInteger(p) || p < 1 || p > 65535)
+      throw new TypeError(`${what} must list integer ports from 1 to 65535`);
+    if (seen.has(p)) throw new TypeError(`${what} lists port ${p} twice`);
+    seen.add(p);
+  }
+  return [...seen].sort((a, b) => a - b);
+}
+
 /**
  * The request body the kernel sends a running service before restarting it on new files (an
  * upgraded extension, {@link DeviceServiceRollCheck}). A service that answers

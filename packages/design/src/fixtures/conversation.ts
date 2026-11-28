@@ -276,7 +276,8 @@ export type FixtureTool = {
   added?: number;
   removed?: number;
   /** A crossing Auto granted by itself (§6.16.9 "approved automatically"). */
-  autoGranted?: "directory" | "host" | "outside-sandbox" | "sensitive";
+  autoGranted?: "directory" | "host" | "outside-sandbox" | "sensitive" | "loopback-port";
+  autoGrantedPort?: number;
   /** A command the review admitted to run outside the OS sandbox (§6.16.9). */
   outsideSandbox?: boolean;
   /** Who approved the call without asking the person (§6.16.9 "approved automatically"). */

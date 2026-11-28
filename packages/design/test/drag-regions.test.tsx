@@ -668,37 +668,33 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-head-row) - var(--cb-space-2)))");
   });
 
-  it("in the end band a first-level head's title row is the band's row beside the caption buttons", () => {
+  it("in the end band a first-level head stays in the paper; the band holds only the controls", () => {
+    // maintainer decision 2026-11-28 (#1096): the band holds what the conversation band holds (a
+    // path row, the panel toggles); a first-level page's head (the large title, its actions, the
+    // tabs) stays in the paper as on macOS, space.5 below the band, and the band above it is
+    // ground with the caption buttons alone (the rail's form on macOS draws the same band)
     const css$ = css("shell-environment.css");
-    expect(css$).toMatch(
-      /@property --cb-shell-end-drop \{[^}]*syntax: "<length>";[^}]*initial-value: 0px;/,
-    );
-    // set with the end row alone, so the start band (the rail's form) never reads it
-    const sets = rules().filter((r) => r.decls["--cb-shell-end-drop"] !== undefined);
-    expect(sets.map((r) => [r.at, r.selector, r.decls["--cb-shell-end-drop"]])).toEqual([
-      [
-        "(min-width: 600px)",
-        ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"])',
-        "var(--cb-shell-row-end)",
-      ],
-    ]);
-    const E = "not style(--cb-shell-end-drop: 0px)";
+    expect(css$).not.toContain("--cb-shell-end-drop");
+    const Q = "not style(--cb-shell-paper-drop: 0px)";
     const HEAD =
       ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))';
-    expect(decl(HEAD, "padding-top", E)).toBe("0");
-    const ROW = `${HEAD} :is(.cb-pageheader > .cb-pageheader-row, .cb-pageheader-titleless)`;
-    expect(decl(ROW, "min-height", E)).toBe("var(--cb-shell-row)");
-    expect(decl(ROW, "align-items", E)).toBe("center");
-    // the head's actions end clear of the caption buttons, past the frame's centring margin
-    expect(decl(ROW, "padding-right", E)).toBe(
-      "max( 0px, calc( var(--cb-shell-reserve-end) + var(--cb-space-2) - var(--cb-content-pad) - var(--cb-inset-right) - max(0px, (100cqw - var(--cb-layout-content)) / 2) ) )",
-    );
-    // the gutter keeps space.2 there: it must not lie over the row's controls
-    const gutter = rules().find((r) => r.at === E && r.selector.endsWith("> .cb-shell-gutter"));
-    expect(gutter?.decls.height).toBe("var(--cb-space-2)");
-    // the end block comes after the start band's, so it wins where both match
-    expect(css$.indexOf(`@container ${E}`)).toBeGreaterThan(
-      css$.indexOf("@container not style(--cb-shell-paper-drop: 0px)"),
+    expect(
+      rules()
+        .filter((r) => r.at !== null && r.at.startsWith("not style(") && r.selector === HEAD)
+        .map((r) => [r.at, r.decls["padding-top"]]),
+    ).toEqual([[Q, "calc(var(--cb-shell-row) + var(--cb-space-5))"]]);
+    // no rule sizes a first-level head's title row to the band
+    expect(
+      rules().filter(
+        (r) =>
+          r.selector.includes(".cb-pageheader-row") &&
+          (r.decls["min-height"] ?? "").includes("--cb-shell-row"),
+      ),
+    ).toEqual([]);
+    // the gutter over it is the band (the head reserves the row: end controls reach into the
+    // content column), so the empty band drags the window
+    expect(decl(':root[data-shell="desktop"] .cb-shell-column', "--cb-shell-head-row")).toContain(
+      "var(--cb-shell-reserve-end)",
     );
   });
 

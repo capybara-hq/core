@@ -64,6 +64,7 @@ describe("COMPACTION_SETTINGS", () => {
       idleEnabled: true,
       idleMinTokensFloor: 200_000,
       idleMinWindowRatio: 0.3,
+      idleDelayMinutes: 30,
     });
   });
 
@@ -81,6 +82,9 @@ describe("COMPACTION_SETTINGS", () => {
     expect(() => COMPACTION_SETTINGS.parse({ idleMinTokensFloor: 2_000_001 })).toThrow();
     expect(() => COMPACTION_SETTINGS.parse({ idleMinWindowRatio: 0.95 })).toThrow();
     expect(() => COMPACTION_SETTINGS.parse({ idleMinWindowRatio: 0.09 })).toThrow();
+    expect(() => COMPACTION_SETTINGS.parse({ idleDelayMinutes: 4 })).toThrow();
+    expect(() => COMPACTION_SETTINGS.parse({ idleDelayMinutes: 1441 })).toThrow();
+    expect(() => COMPACTION_SETTINGS.parse({ idleDelayMinutes: 30.5 })).toThrow();
   });
 
   it("accepts the range bounds", () => {
@@ -101,6 +105,12 @@ describe("effectiveCompactionSettings", () => {
     expect(eff.idleEnabled).toBe(false);
     expect(eff.idleMinTokensFloor).toBe(300_000);
     expect(eff.idleMinWindowRatio).toBe(0.5);
+  });
+
+  it("an org's idleDelayMinutes wins and keeps the platform's other fields", () => {
+    const platform = { ...defaults, threshold: 0.6 };
+    const eff = effectiveCompactionSettings(platform, { idleDelayMinutes: 90 });
+    expect(eff).toEqual({ ...platform, idleDelayMinutes: 90 });
   });
 
   it("an org value wins over the platform's", () => {

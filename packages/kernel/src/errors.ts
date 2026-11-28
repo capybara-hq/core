@@ -452,6 +452,12 @@ export const ERROR_CODES = {
   "approval.input_leaked": 422,
   /** Inputs for an approval that asks for none, or for a path it does not ask for. */
   "approval.inputs_not_expected": 400,
+  /**
+   * A loopback port ask approved while the device can no longer open a local port to the browser
+   * (its outside-sandbox setting, its runtime or its provider), or the service already has the
+   * most local ports open: the ask stays pending.
+   */
+  "approval.loopback_unavailable": 409,
   "question.not_found": 404,
   "question.already_answered": 409,
   "tool_output.not_found": 404,

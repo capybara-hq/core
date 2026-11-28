@@ -1084,8 +1084,16 @@ export interface DeviceAccessCtx {
         done: boolean;
     }): Promise<void>;
     ensureService(call: ToolCallContext, spec: DeviceServiceSpec): Promise<DeviceServiceStatus>;
+    grantLoopbackPort(scope: DeviceAccessScope & {
+        service: string;
+        port: number;
+    }): Promise<LoopbackGrantView>;
+    loopbackPorts(scope: DeviceAccessScope & {
+        service: string;
+    }): Promise<LoopbackGrantView[]>;
     reportBlockedHosts(call: ToolCallContext, hosts: ServiceBlockedHost[], opts?: {
         url?: string;
+        service?: string;
     }): void;
     request(call: ToolCallContext, req: {
         service: string;
@@ -1093,6 +1101,10 @@ export interface DeviceAccessCtx {
         timeoutMs: number;
         ifRunning?: boolean;
     }): Promise<Uint8Array>;
+    revokeLoopbackPort(scope: DeviceAccessScope & {
+        service: string;
+        port: number;
+    }): Promise<void>;
     streamTicket(scope: DeviceAccessScope & {
         service: string;
     }): Promise<{
@@ -1112,7 +1124,18 @@ export class DeviceAccessError extends Error {
 // @public
 export type DeviceAccessErrorCode = "no_device" | "provider_unavailable" | "capability_missing" | "not_owner" | "service_not_declared"
 /** An `ifRunning` request found the device's instance or the service not running. */
-| "not_running";
+| "not_running"
+/** A loopback port call from an extension without `permissions.deviceAccess.loopbackPorts`. */
+| "loopback_not_declared"
+/**
+* A loopback port cannot be granted here: running outside the sandbox is off (platform, org,
+* device or owner setting), the run is unattended, or the provider has no loopback support.
+*/
+| "loopback_unavailable"
+/** The service already holds `LOOPBACK_MAX_PORTS_PER_SERVICE` live loopback port grants. */
+| "loopback_limit"
+/** A malformed argument (a loopback port that is not an integer from 1 to 65535). */
+| "invalid_request";
 
 // @public
 export type DeviceAccessScope = {
@@ -1160,6 +1183,7 @@ export interface DeviceProvider {
     readonly dialIn?: DialInHandler;
     ensureService?(h: SandboxHandle, spec: DeviceServiceSpec, signal: AbortSignal, opts?: {
         ifRunning?: boolean;
+        loopbackPorts?: readonly number[];
     }): Promise<DeviceServiceStatus>;
     exec(h: SandboxHandle, args: {
         command: string;
@@ -1267,6 +1291,13 @@ export function deviceServiceFilesDigest(files: Record<string, Uint8Array>): str
 
 // @public
 export function deviceServiceId(extension: string, name: string): string;
+
+// @public
+export interface DeviceServiceNetwork {
+    hosts: string[];
+    kind: "open-public" | "allowlist";
+    loopbackPorts?: number[];
+}
 
 // @public
 export interface DeviceServiceRollCheck {
@@ -1947,6 +1978,7 @@ export interface ExtensionPermissions {
     };
     deviceAccess?: {
         services: string[];
+        loopbackPorts?: boolean;
     };
     dialIn?: {
         protocol: string;
@@ -2614,6 +2646,9 @@ export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 export function isIdentitySourceRefused(err: unknown): boolean;
 
 // @public
+export function isLoopbackGrantHost(host: string): boolean;
+
+// @public
 export function isModelError(e: unknown): e is ModelError;
 
 // @public
@@ -2722,6 +2757,26 @@ export interface Logger {
     error(msg: string, fields?: Record<string, unknown>): void;
     info(msg: string, fields?: Record<string, unknown>): void;
     warn(msg: string, fields?: Record<string, unknown>): void;
+}
+
+// @public
+export const LOOPBACK_DATABASE_PORTS: readonly number[];
+
+// @public
+export const LOOPBACK_GRANT_HOSTS: readonly ["127.0.0.1", "::1", "localhost"];
+
+// @public
+export const LOOPBACK_MAX_PORTS_PER_SERVICE = 32;
+
+// @public
+export type LoopbackGrantSource = "human" | "review-model" | "full-access" | "owner-panel";
+
+// @public
+export interface LoopbackGrantView {
+    database: boolean;
+    expiresAt: string;
+    port: number;
+    source: LoopbackGrantSource;
 }
 
 // @public
@@ -3428,6 +3483,9 @@ export function parseExtensionPoint(ref: string): {
 export function parseGitSource(git: unknown): GitSource | {
     errors: string[];
 };
+
+// @public
+export function parseLoopbackPorts(value: unknown, what: string): number[];
 
 // @public
 export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseOptions): MarketplaceManifest | {
@@ -4258,6 +4316,7 @@ export interface SandboxPermissionSupport {
         readonly openPublic: boolean;
         readonly allowlist: boolean;
         readonly perOperationHosts: boolean;
+        readonly loopbackPorts?: boolean;
     };
     readonly outsideSandbox: boolean;
     readonly restricted: {
@@ -4339,6 +4398,7 @@ export type SandboxStopResult = {
 
 // @public
 export interface SandboxSupportLimitedBy {
+    readonly loopbackPorts?: "device-update";
     readonly openPublic?: "owner";
     readonly outsideSandbox?: "owner";
 }
@@ -4363,7 +4423,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.89";
+export const SDK_VERSION = "0.1.0-rc.90";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -4376,8 +4436,10 @@ export const SERVICE_CONNECTION_KINDS: readonly ["request", "stream"];
 
 // @public
 export interface ServiceBlockedHost {
+    class?: AddressClass;
     host: string;
     layer: NetworkBlockLayer;
+    port?: number;
 }
 
 // @public

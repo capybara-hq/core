@@ -19,6 +19,7 @@ import { type CommandGroup, CommandPalette } from "../overlays/index";
 import type { MenuItem } from "../overlays/menus";
 import { useDesignT } from "../provider";
 import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
+import { BandSearch } from "./band-search";
 import { DragFill } from "./drag-fill";
 import { backTarget, FloatingBar, type FloatingLead, routeCommitted } from "./floating-bar";
 import { INSET_SETTLE_MS, KEYBOARD_INSET_SETTLED_EVENT } from "./keyboard-settled";
@@ -530,6 +531,11 @@ export function AppShell({
               />
             </Tooltip>
           </div>
+        ) : null}
+        {/* The ground band's search field (desktop shell, maintainer decision 2026-11-28): CSS
+            shows it only in a band and band-search.tsx only where it fits. */}
+        {searchable && shellKind === "desktop" && reference === undefined ? (
+          <BandSearch onOpen={() => setPaletteOpen(true)} />
         ) : null}
         {banner ? (
           <div className="cb-shell-banner" data-part="shell-banner">

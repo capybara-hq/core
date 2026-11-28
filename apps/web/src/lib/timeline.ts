@@ -253,6 +253,8 @@ export interface ApprovalItem {
   approver?: Waiter;
   /** A network ask (network ask spec §6.5): the device-layer hosts asked for. */
   network?: { hosts: string[] };
+  /** A loopback port ask (browser loopback port grants spec §5.2): the service, port and kind. */
+  loopback?: { service: string; port: number; database: boolean };
   /** A command review ask (auto mode spec §5.4): what is held and why. */
   command?: CommandAsk;
   /** A secure input request: what the values are for and the field paths (never a value). */
@@ -1821,8 +1823,13 @@ export function buildEventTimeline(
         }
         // the review admitted the command outside the OS sandbox (a per-call escalation)
         if (p.review?.sandbox === "escalated") row.outsideSandbox = true;
-        // Full access granted the crossing by itself: the row says so, neutrally, with its kind
-        if (p.review?.decisionSource === "full-access" && p.review.crossing !== undefined)
+        // Full access granted the crossing by itself: the row says so, neutrally, with its kind (a
+        // loopback port grant is marked by its own review record, `permission_reviewed`, below)
+        if (
+          p.review?.decisionSource === "full-access" &&
+          p.review.crossing !== undefined &&
+          p.review.crossing !== "loopback-port"
+        )
           row.autoGranted = p.review.crossing;
         delete row.waiting;
         delete row.waitingFor;
@@ -1913,6 +1920,37 @@ export function buildEventTimeline(
           });
           groupReveals.set(c.group, list);
         }
+        break;
+      }
+      case "permission_reviewed": {
+        // a loopback port Full access or the review model granted without asking the person: the
+        // call's row names the port (the re-run's result carries no review of its own)
+        const p = e.payload as {
+          scopeKind?: unknown;
+          outcome?: unknown;
+          decisionSource?: unknown;
+          binding?: { callId?: unknown };
+          loopback?: { port?: unknown };
+        };
+        const port = p.loopback?.port;
+        if (
+          p.scopeKind !== "loopback-port" ||
+          p.outcome !== "allow" ||
+          typeof port !== "number" ||
+          typeof p.binding?.callId !== "string"
+        )
+          break;
+        if (
+          p.decisionSource !== "full-access" &&
+          p.decisionSource !== "review-model" &&
+          p.decisionSource !== "rule"
+        )
+          break;
+        const c = calls.get(callKey(e.runId, p.binding.callId));
+        if (!c) break;
+        c.tool.row.autoGranted = "loopback-port";
+        c.tool.row.autoGrantedPort = port;
+        if (p.decisionSource === "review-model") c.tool.row.approvedBy = "review-model";
         break;
       }
       case "tool_ask_decided": {
@@ -2192,6 +2230,7 @@ export function buildEventTimeline(
             ...(e.payload.network !== undefined
               ? { network: { hosts: [...e.payload.network.hosts] } }
               : {}),
+            ...(e.payload.loopback !== undefined ? { loopback: { ...e.payload.loopback } } : {}),
             ...(e.payload.command !== undefined ? { command: e.payload.command } : {}),
             ...(e.payload.secureInput !== undefined
               ? {

@@ -1,8 +1,9 @@
 import {
   DEVICE_SERVICE_MAX_MESSAGE,
+  type DeviceServiceNetwork,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
-  type SandboxLimits,
+  parseLoopbackPorts,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { ENV_NAME_RE } from "../exec/shared.js";
@@ -26,7 +27,9 @@ export const MAX_SERVICE_REQUEST_TIMEOUT_MS = 600_000;
  *
  * - `{ op: "service.ensure", spec: { name, entry, args, files, env? }, network?, ifRunning? }`
  *   answers the `DeviceServiceStatus`; `files` values are standard base64; `network` is the
- *   device's network as the provider holds it (its limits), absent = no network; a running service
+ *   device's network as the provider holds it (its limits), absent = no network, with
+ *   `loopbackPorts` the whole set of loopback ports granted to the service (strict: integers
+ *   1–65535, at most 32, no duplicates; absent or empty = none); a running service
  *   started with another network is restarted with this one; `ifRunning: true` reads only
  *   `spec.name` (device-local sends `{ name }`; `entry` and `args` may then be left out), starts nothing when
  *   the service is stopped (it answers the stopped status) and restarts a running one whose
@@ -44,7 +47,7 @@ export type ServiceOpBody =
   | {
       op: "service.ensure";
       spec: LocalServiceSpec;
-      network?: SandboxLimits["network"];
+      network?: DeviceServiceNetwork;
       ifRunning?: boolean;
       filesDigest?: string;
     }
@@ -138,10 +141,10 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
         env[k] = str(v, `spec.env.${k}`, 65536);
       }
     }
-    let network: SandboxLimits["network"] | undefined;
+    let network: DeviceServiceNetwork | undefined;
     if (o.network !== undefined) {
       const n = record(o.network, "network");
-      keys(n, ["kind", "hosts"], "network");
+      keys(n, ["kind", "hosts", "loopbackPorts"], "network");
       if (n.kind !== "open-public" && n.kind !== "allowlist")
         invalid('network.kind must be "open-public" or "allowlist"');
       if (!Array.isArray(n.hosts) || n.hosts.length > 1000)
@@ -149,7 +152,16 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
       const hosts = n.hosts.map((h) => str(h, "network.hosts entry", 253));
       for (const h of hosts)
         if (validateAllowHost(h).length > 0) invalid(`network.hosts has an invalid host ${h}`);
-      network = { kind: n.kind, hosts };
+      // the whole set of granted loopback ports, sent whole (absent or empty: none)
+      let loopbackPorts: number[] | undefined;
+      if (n.loopbackPorts !== undefined) {
+        try {
+          loopbackPorts = parseLoopbackPorts(n.loopbackPorts, "network.loopbackPorts");
+        } catch (error) {
+          invalid((error as Error).message);
+        }
+      }
+      network = { kind: n.kind, hosts, ...(loopbackPorts && { loopbackPorts }) };
     }
     return {
       op,

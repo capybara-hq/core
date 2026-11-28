@@ -113,6 +113,8 @@ import { z } from "zod";
  *   logs `service-start <id> <name> <pid>` ({@link fakeServiceStarts}), each `ifRunning` ensure
  *   `service-if-running <id> <name> <running|stopped>`, each stop
  *   `service-stop <id> <name>`; {@link fakeServiceRunning} tells whether the process lives.
+ *   Every ensure also logs the loopback ports it was sent, `service-loopback <id> <name>
+ *   <p1,p2,…|->` (`-` for none or absent; {@link readFakeServiceLoopbackPorts}).
  * - limits (sandbox dev tiers spec §7.1): `updateMode` (deployment config or
  *   {@link FakeSandboxOptions}) gives the provider an `update` that answers `updated` (and records
  *   the new limits in the instance's `meta.json`), `recreate`, or fails (`throw`); `none` (the default) has no
@@ -311,6 +313,13 @@ export function fakeServiceStateDir(root: string, instanceId: string, name: stri
 /** How many device service processes the fake has started under `root` (all instances). */
 export async function fakeServiceStarts(root: string): Promise<number> {
   return (await readFakeSandboxOps(root)).filter((l) => l[0] === "service-start").length;
+}
+
+/** The loopback ports each `ensureService` was sent, in order (`[]` for none or absent). */
+export async function readFakeServiceLoopbackPorts(root: string): Promise<number[][]> {
+  return (await readFakeSandboxOps(root))
+    .filter((l) => l[0] === "service-loopback")
+    .map((l) => (l[3] === undefined || l[3] === "-" ? [] : l[3].split(",").map(Number)));
 }
 
 /** Whether the named service of the instance has a running record and its process lives. */
@@ -534,6 +543,10 @@ function serviceSurface(
       if (!DEVICE_SERVICE_ID_RE.test(spec.name))
         throw new Error(`invalid device service id ${spec.name}`);
       await requireRunning(h);
+      const ports = opts?.loopbackPorts ?? [];
+      await log(
+        `service-loopback ${h.id} ${spec.name} ${ports.length > 0 ? ports.join(",") : "-"}`,
+      );
       if (opts?.ifRunning === true) {
         // never starts one; a running one would get the device's current limits again
         const status = await statusOf(h, spec.name);
@@ -1502,7 +1515,7 @@ async function fakeBoundary(root: string): Promise<"operation" | "instance"> {
     : (JSON.parse(text) as SandboxPermissionSupport).boundary;
 }
 
-/** The fake's default permission support: both profiles and background ownership. */
+/** The fake's default permission support: both profiles, background ownership and loopback ports. */
 export const FAKE_PERMISSION_SUPPORT: SandboxPermissionSupport = Object.freeze({
   version: 2,
   restricted: Object.freeze({
@@ -1512,7 +1525,7 @@ export const FAKE_PERMISSION_SUPPORT: SandboxPermissionSupport = Object.freeze({
     concurrentScopes: true,
   }),
   boundary: "operation",
-  network: { openPublic: false, allowlist: true, perOperationHosts: true },
+  network: { openPublic: false, allowlist: true, perOperationHosts: true, loopbackPorts: true },
   outsideSandbox: true,
   background: true,
 }) as SandboxPermissionSupport;

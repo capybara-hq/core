@@ -145,6 +145,7 @@ describe("组织 HTTP", () => {
       idleEnabled: true,
       idleMinTokensFloor: 200_000,
       idleMinWindowRatio: 0.3,
+      idleDelayMinutes: 30,
     });
 
     const set = await patch({ compaction: { threshold: 0.6 } });
@@ -172,9 +173,20 @@ describe("组织 HTTP", () => {
       keepRecentTurns: 2,
       idleMinTokensFloor: 300_000,
     });
+    const delay = await patch({ compaction: { idleDelayMinutes: 120 } });
+    expect(delay.statusCode).toBe(200);
+    expect((await read()).settings.compaction).toEqual({
+      threshold: 0.6,
+      keepRecentTurns: 2,
+      idleMinTokensFloor: 300_000,
+      idleDelayMinutes: 120,
+    });
     for (const bad of [
       { idleMinTokensFloor: 49_999 },
       { idleMinWindowRatio: 0.95 },
+      { idleDelayMinutes: 4 },
+      { idleDelayMinutes: 1441 },
+      { idleDelayMinutes: 30.5 },
       { idleEnable: false },
     ]) {
       const res = await patch({ compaction: bad });
