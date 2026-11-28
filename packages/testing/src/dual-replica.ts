@@ -168,7 +168,7 @@ async function queuedOrphansOf(dbUrl: string, redisUrl: string): Promise<string[
   // the kernel in its own module graph
   const { createDb, kernelDb, queuedRunsWithoutJob } = await import("@capybara-hq/kernel");
   const { sql } = await import("kysely");
-  const raw = createDb(dbUrl, 1, () => {}, { connectTimeoutMs: 5000 });
+  const raw = createDb(dbUrl, 1, () => {}, { connectTimeoutMs: 30_000 });
   const redis = new Redis(redisUrl, {
     lazyConnect: true,
     connectTimeout: 5000,
