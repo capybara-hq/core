@@ -140,13 +140,24 @@ const ev = <T extends ConversationEvent["type"]>(events: ConversationEvent[], ty
     (e): e is ConversationEvent & { type: T; payload: EventPayload<T> } => e.type === type,
   );
 
-/** A settled conversation of `n` answered turns: what an idle compaction summarizes. */
+/**
+ * A settled conversation of `n` answered turns: what an idle compaction summarizes. Settled means
+ * the last run's worker is done too: its terminal event is written before the worker calls
+ * `beforeRelease` and releases the conversation lock, so a test that sets that seam next must not
+ * catch the last chat run instead of the idle run.
+ */
 async function settled(n = 6): Promise<string> {
   const conv = await createConv(owner, orgId, agentId);
   for (let i = 0; i < n; i++) {
     await postMessage(owner, orgId, conv, `echo:turn ${i} ${"words ".repeat(40)}`);
     await waitForTerminal(db, conv, i + 1, 20_000);
   }
+  const lock = k.app.get(ConversationLock);
+  await waitFor(
+    async () => ((await lock.holder(conv)) === null ? true : null),
+    20_000,
+    "the last run released the conversation lock",
+  );
   return conv;
 }
 
@@ -160,7 +171,7 @@ async function armedSeqOf(conv: string): Promise<number> {
 async function startIdle(conv: string): Promise<string> {
   const armedSeq = await armedSeqOf(conv);
   const id = await withOrgScope(orgId, () =>
-    k.app.get(RunQueue).startIdleCompaction(conv, armedSeq),
+    k.app.get(RunQueue).startIdleCompaction(conv, armedSeq, "cache"),
   );
   expect(id).not.toBeNull();
   return id as string;

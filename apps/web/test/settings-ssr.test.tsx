@@ -227,7 +227,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       `GET ${O}/settings`,
       { radios: 4, kv: 1, items: 0, switches: 0, groups: 0, hints: 0 },
     ],
-    // the purposes tab: the kernel's nine purposes, each its own section over its model select
+    // the purposes tab: the kernel's ten purposes, each its own section over its model select
     [
       "/settings/models?tab=purposes",
       `GET ${O}/model-purposes`,
@@ -461,7 +461,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/settings/models?tab=purposes: the purposes load as the kernel's nine sections", async () => {
+  it("/settings/models?tab=purposes: the purposes load as the kernel's ten sections", async () => {
     const { release } = await renderHeld(
       "/settings/models?tab=purposes",
       `GET ${O}/model-purposes`,
@@ -469,7 +469,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await vi.waitFor(() => {
       if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
     });
-    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(9);
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(10);
     // the tab's description is real while the purposes load
     expect(screen.getByText(en.models.org.description)).toBeTruthy();
     await release();

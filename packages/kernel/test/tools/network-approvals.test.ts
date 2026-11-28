@@ -438,7 +438,7 @@ describe("what an ask offers (device-provider spec §6.3)", () => {
     expect((await deviceView(device)).sandbox.pendingFilesReset).toBe(false);
     const a = await blockedAsk(device, ["b.dev"]);
     expect(a.scopes).toEqual(["always"]);
-    expect(a.detail?.appliesAt).toBe("files-reset");
+    expect((a.detail as { appliesAt?: string } | null)?.appliesAt).toBe("files-reset");
     const res = await decide(a.id, { decision: "approve", scope: "always" });
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { approval: Record<string, unknown> }).approval).toMatchObject({
@@ -558,7 +558,7 @@ describe("what an ask offers (device-provider spec §6.3)", () => {
     const dialInDevice = await ownListDevice(FAKE_PERMISSION_SUPPORT);
     const a = await blockedAsk(dialInDevice, ["b.dev"]);
     expect(a.scopes).toEqual(["once", "always"]);
-    expect(a.detail?.appliesAt).toBe("next-command");
+    expect((a.detail as { appliesAt?: string } | null)?.appliesAt).toBe("next-command");
     // decided from IM: the device's change says so
     await approvals().decide(
       orgId,

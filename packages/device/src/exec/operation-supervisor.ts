@@ -746,8 +746,12 @@ export class MacOperationSupervisor {
               await this.serial(() => {
                 if (entry.revoked || controller.signal.aborted)
                   throw new SandboxScopeDeniedError("Operation revoked before launch");
+                // not a scope refusal: the device was too slow to start it in time, nothing ran
+                // (a plain error reaches the deployment as the machine's definite failure)
                 if (entry.admitBeforeMs <= this.now())
-                  throw new SandboxScopeDeniedError("Operation admission expired before launch");
+                  throw new Error(
+                    "The device was too busy to start this operation before its admission expired, so nothing ran; retry the call",
+                  );
               });
             },
             onLaunch: async (identity) => {
@@ -1497,6 +1501,24 @@ export class MacOperationSupervisor {
         if (!this.journalBlocked) this.persist();
         return;
       }
+      const live = this.live.get(ref.operationId);
+      if (!live) {
+        // Nothing of it can run: it never launched (no launch identity, the same proof `prunable`
+        // takes) or it completed. Its stop is final, so it never stays owed: the owner ceiling's
+        // reconcile asks again every few seconds, and an owed stop was journaled at every ask.
+        if (e.identity === undefined || e.state === "completed") {
+          e.revoked = true;
+          e.stop = { outcome: "stopped" };
+          this.persistControl(e);
+          try {
+            this.persist();
+          } catch {}
+          outcome = e.stop;
+          return;
+        }
+        // a lost process's stop is owed until `settleOrphans` proves it gone: nothing new to record
+        if (e.revoked && e.stop?.outcome === "cancel-pending") return;
+      }
       e.revoked = true;
       e.stop = { outcome: "cancel-pending" };
       this.persistControl(e);
@@ -1505,7 +1527,6 @@ export class MacOperationSupervisor {
       try {
         this.persist();
       } catch {}
-      const live = this.live.get(ref.operationId);
       if (!live) return;
       // Claim inside the journal queue before invoking cancellation or observing completion.
       // Do not return this promise from the queue callback: settlement also journals its result.

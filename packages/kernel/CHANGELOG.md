@@ -1,5 +1,49 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.115
+
+### Patch Changes
+
+- 0b25581: Pin bailian rc.15, deepseek rc.14 and openai-compatible rc.16: a `toolChoice: "none"` request (the
+  in-context summary and the step-limit wrap-up) no longer drops the tool definitions on DashScope
+  and DeepSeek, so it reads the conversation's prompt cache instead of rewriting it in full.
+- 6992dd1: A `compaction` model purpose: a platform or org admin can map a cheaper summary model for
+  compaction (kind `chat`); an unmapped or unusable mapping falls back to the conversation's model.
+  With a compaction model, idle compaction gains a transcript mode that does not need a warm cache:
+  it runs after `idleDelayMinutes` of inactivity (default 30). Cache mode keeps its timing from the
+  cache and has no delay field.
+  
+  Data residency: with a compaction model, the conversation transcript is sent to that model's
+  provider, not the conversation model's. Choose a provider the deployment may send it to.
+  
+  Measured transcript recall of the compaction model (idle spec quality gate, 20 seeded
+  conversations): `qwen4-max` 97.1%, `qwen3.8-flash` 90.0%, `deepseek-flash` 87.5%,
+  `claude-haiku-5-5` 81.3%, `deepseek-v4-pro` 80.4%, `claude-sonnet-5-5` 73.8%. OpenAI `gpt-5-nano`
+  keeps only 19.6% (8/20 constraints) and is unsuitable as a compaction model.
+
+## 0.1.0-rc.114
+
+### Minor Changes
+
+- 1f54362: Loopback port grants for device services. Grant records (`device_loopback_grants`) last 24 hours,
+  with at most 32 live ports per service. Every ensure of a device service sends its live set. A
+  grant, a revoke, the expiry pass, a deleted root conversation, a deleted device and every
+  narrowing outside-sandbox ceiling refresh the running service, and a failed send is retried until
+  it reaches the device.
+
+### Patch Changes
+
+- Updated dependencies [4e1a201]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.90
+
+## 0.1.0-rc.113
+
+### Patch Changes
+
+- 9d1f819: A new conversation with a device project picked lists that project's skills in the `/` menu (as
+  last read in one of your conversations, without asking the device), and its first message can
+  invoke one; a bound conversation whose first run has not read the project yet does the same.
+
 ## 0.1.0-rc.112
 
 ### Patch Changes

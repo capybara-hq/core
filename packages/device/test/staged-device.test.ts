@@ -378,6 +378,32 @@ describe("staged device parts (W3-M)", () => {
     expect(supported.checks).toEqual([]);
   });
 
+  it("advertises loopbackPorts only on a macOS host device", async () => {
+    const features = async (s: ReturnType<typeof staged>) =>
+      (await s.device.report()).body.features ?? [];
+    expect(await features(staged())).toEqual(["networkReport", "projects", "loopbackPorts"]);
+    expect(await features(staged({ platform: "linux" }))).not.toContain("loopbackPorts");
+    expect(
+      await features(
+        // a local-Docker device on a Mac runs the Linux agent: no macOS service launcher
+        staged({
+          cred: credential({ mode: "docker" }),
+          platform: "darwin",
+          container: {
+            imagePlatform: "amd64",
+            helpers: hostHelperLauncher("/nonexistent/python3"),
+            operationContainer: async () => ({
+              name: "capybara-device-d",
+              user: "1000:1000",
+              release: () => {},
+            }),
+          },
+          imageDigest: SANDBOX_IMAGE_PIN.platforms.amd64.config,
+        }),
+      ),
+    ).not.toContain("loopbackPorts");
+  });
+
   it("Linux fails closed when the probe reports an unsupported kernel", async () => {
     const s = staged({ platform: "linux", probe: { restricted: null, reason: "Landlock ABI 2" } });
     const support = (await s.device.binder.bind(request(G1, B1, null), signal())).permissionSupport;

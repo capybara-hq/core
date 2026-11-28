@@ -173,8 +173,13 @@ export interface PipelineTestDeps {
     | "commandForCall"
     | "requestCommand"
   > &
-    /** Absent: the call never has a secure input (a request then fails the test). */
-    Partial<Pick<ApprovalsService, "requestSecureInput" | "secureInputForCall">>;
+    /**
+     * Absent: the call never has a secure input (a request then fails the test); a hand-built
+     * pipeline has no loopback grants, so it never asks about a loopback port.
+     */
+    Partial<
+      Pick<ApprovalsService, "requestSecureInput" | "secureInputForCall" | "requestLoopback">
+    >;
   questions: Pick<QuestionsService, "ask" | "forCall">;
   config: () => unknown;
   log: Logger;
@@ -201,19 +206,33 @@ export interface PipelineTestDeps {
 }
 
 /** Approvals for a pipeline: a double without secure inputs gets "none" and a failing request. */
-function withSecureInputs(
-  a: PipelineTestDeps["approvals"],
-): Pick<ApprovalsService, "requestSecureInput" | "secureInputForCall"> & typeof a {
-  if (a.requestSecureInput !== undefined && a.secureInputForCall !== undefined) {
-    return a as Pick<ApprovalsService, "requestSecureInput" | "secureInputForCall"> & typeof a;
+type Filled = Pick<
+  ApprovalsService,
+  "requestSecureInput" | "secureInputForCall" | "requestLoopback"
+>;
+
+function withSecureInputs(a: PipelineTestDeps["approvals"]): Filled & typeof a {
+  if (
+    a.requestSecureInput !== undefined &&
+    a.secureInputForCall !== undefined &&
+    a.requestLoopback !== undefined
+  ) {
+    return a as Filled & typeof a;
   }
   // the prototype chain keeps a service instance's own methods
   return Object.assign(Object.create(a) as typeof a, {
-    secureInputForCall: async () => null,
-    requestSecureInput: async (): Promise<never> => {
-      throw new Error("this test pipeline has no secure input requests");
-    },
-  });
+    ...(a.secureInputForCall === undefined && { secureInputForCall: async () => null }),
+    ...(a.requestSecureInput === undefined && {
+      requestSecureInput: async (): Promise<never> => {
+        throw new Error("this test pipeline has no secure input requests");
+      },
+    }),
+    ...(a.requestLoopback === undefined && {
+      requestLoopback: async (): Promise<never> => {
+        throw new Error("this test pipeline has no loopback port asks");
+      },
+    }),
+  }) as Filled & typeof a;
 }
 
 /** A tool pipeline over test doubles (no extension host: inline cards are dropped). */

@@ -47,13 +47,14 @@ export interface FinishRunArgs {
   idleCompaction?: IdleCompactionIntent;
 }
 
-/** What {@link FinishRunArgs.idleCompaction} carries (`runAt` and `expiresAt` in epoch ms). */
-export interface IdleCompactionIntent {
-  orgId: string;
-  cacheCallSeq: number;
-  expiresAt: number;
-  runAt: number;
-}
+/**
+ * What {@link FinishRunArgs.idleCompaction} carries (`runAt` and `expiresAt` in epoch ms), by the
+ * job's mode (compaction model spec §6.2): a cache-mode job carries the armed call and its expiry,
+ * a compaction-model job only its due time.
+ */
+export type IdleCompactionIntent =
+  | { orgId: string; mode: "cache"; cacheCallSeq: number; expiresAt: number; runAt: number }
+  | { orgId: string; mode: "compaction_model"; runAt: number };
 
 /**
  * Writes runs' terminal states (one instance; the run worker, the run queue's orphan abort, the
@@ -209,7 +210,8 @@ export class RunFinish {
       await oweEnsureRun(this.outbox, a.conversationId, seq, conv.org_id);
     }
     // the idle compaction job armed for this run's end (idle compaction spec §4.2, S4): due before
-    // the prompt cache expires, stale as soon as anything but a run-less side-call usage follows
+    // the prompt cache expires (cache mode) or `idleDelayMinutes` after the run (compaction-model
+    // mode), stale as soon as anything but a run-less side-call usage follows
     if (
       a.idleCompaction !== undefined &&
       conv?.org_live &&
@@ -217,18 +219,24 @@ export class RunFinish {
       conv.kind === "chat" &&
       a.idleCompaction.orgId === conv.org_id
     ) {
-      const { orgId, cacheCallSeq, expiresAt, runAt } = a.idleCompaction;
+      const intent = a.idleCompaction;
+      const job = {
+        orgId: intent.orgId,
+        conversationId: a.conversationId,
+        runId: a.runId,
+        armedSeq: seq,
+      };
       await oweIdleCompaction(
         this.outbox,
-        {
-          orgId,
-          conversationId: a.conversationId,
-          runId: a.runId,
-          armedSeq: seq,
-          cacheCallSeq,
-          expiresAt,
-        },
-        runAt,
+        intent.mode === "cache"
+          ? {
+              ...job,
+              mode: "cache",
+              cacheCallSeq: intent.cacheCallSeq,
+              expiresAt: intent.expiresAt,
+            }
+          : { ...job, mode: "compaction_model" },
+        intent.runAt,
       );
     }
     if (conv?.org_live) await this.oweTreeWork(a, conv.kind, conv.org_id);

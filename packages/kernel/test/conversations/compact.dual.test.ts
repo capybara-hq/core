@@ -54,6 +54,11 @@ import {
  * then fires it through `IdleCompactionJob.fire`. model-fake declares `[300, 3600]` and passes the
  * in-context gate; the idle org turns the long cache tier on and the size floor down to the
  * settings' lowest (50,000 tokens, decision D6) over a seeded turn of about 220k characters.
+ *
+ * Compaction-model mode (compaction model spec §6.3): a third org maps its `compaction` purpose to
+ * model-fake's fake-c with the long cache tier off, so the arming finish owes a `compaction_model`
+ * job; fired on both replicas it starts one idle compact run (`idle_mode = 'compaction_model'`)
+ * that writes one summary on fake-c.
  */
 
 const HOOKS_PROBE = fileURLToPath(
@@ -76,6 +81,10 @@ let orgId: string;
 let agentId: string;
 let idleOrgId: string;
 let idleAgentId: string;
+let cOrgId: string;
+let cAgentId: string;
+
+const FAKE_C = { provider: "model-fake", model: "fake-c" };
 
 /** Each replica's run worker seams: a test sets the ones it needs. */
 const hooksA: RunHooks = {};
@@ -100,7 +109,15 @@ beforeAll(async () => {
     {
       roles: ["api", "worker"],
       extensions: [MODEL_FAKE, HOOKS_PROBE],
-      extensionConfig: { "model-fake": { models: [{ id: "fake-1", contextWindow: 400_000 }] } },
+      extensionConfig: {
+        "model-fake": {
+          models: [
+            { id: "fake-1", contextWindow: 400_000 },
+            // the compaction model of the compaction-model org (200k window: eligible)
+            { id: "fake-c", contextWindow: 200_000, cache: "none" },
+          ],
+        },
+      },
     },
   );
   // the armed idle compaction rows stay owed: the tests fire their data themselves
@@ -137,6 +154,22 @@ beforeAll(async () => {
   });
   expect(enabled.statusCode, enabled.body).toBe(200);
   idleAgentId = await createAgent(ownerA, idleOrgId);
+
+  cOrgId = await createOrgWithProviders(a, ownerA, "Idle C");
+  // longTtl off: cache mode alone would arm nothing, the compaction model arms
+  const cPatched = await ownerA({
+    method: "PATCH",
+    url: `/api/v1/orgs/${cOrgId}/settings`,
+    payload: { promptCache: { longTtl: false }, compaction: IDLE_SETTINGS },
+  });
+  expect(cPatched.statusCode, cPatched.body).toBe(200);
+  const mapped = await ownerA({
+    method: "PUT",
+    url: `/api/v1/orgs/${cOrgId}/model-purposes/compaction`,
+    payload: { target: { model: FAKE_C, params: {} } },
+  });
+  expect(mapped.statusCode, mapped.body).toBe(200);
+  cAgentId = await createAgent(ownerA, cOrgId);
 });
 afterAll(async () => {
   await Promise.all([a?.close(), b?.close()]);
@@ -188,12 +221,15 @@ async function armedData(conv: string): Promise<IdleCompactionJobData> {
 }
 
 /**
- * A conversation of the idle org with a long seeded turn and one answered turn, armed: the run's
- * finish owed an `idle-compaction` job; returns its data.
+ * A conversation of the idle org (or `org`) with a long seeded turn and one answered turn, armed:
+ * the run's finish owed an `idle-compaction` job; returns its data.
  */
-async function arm(): Promise<{ conv: string; data: IdleCompactionJobData }> {
-  const conv = await createConv(ownerA, idleOrgId, idleAgentId);
-  const [e] = await withOrgScope(idleOrgId, () =>
+async function arm(
+  org = idleOrgId,
+  agent = idleAgentId,
+): Promise<{ conv: string; data: IdleCompactionJobData }> {
+  const conv = await createConv(ownerA, org, agent);
+  const [e] = await withOrgScope(org, () =>
     a.app.get(EventLog).append(conv, [
       {
         type: "user_message",
@@ -206,7 +242,7 @@ async function arm(): Promise<{ conv: string; data: IdleCompactionJobData }> {
     .set({ consumed_seq: String(e?.seq) })
     .where("id", "=", conv)
     .execute();
-  await postMessage(ownerA, idleOrgId, conv, "echo:ok");
+  await postMessage(ownerA, org, conv, "echo:ok");
   await waitForTerminal(dbA, conv, 1, 30_000);
   return { conv, data: await armedData(conv) };
 }
@@ -218,10 +254,50 @@ const fireOn = (x: TestKernel, data: IdleCompactionJobData) =>
 const idleRuns = (conv: string) =>
   dbA
     .selectFrom("runs")
-    .select(["id", "status"])
+    .select(["id", "status", "idle_mode"])
     .where("conversation_id", "=", conv)
     .where("compact_origin", "=", "idle")
     .execute();
+
+/**
+ * Fires `data` on both replicas at once: both deliveries pass their unlocked checks and reach the
+ * start before either goes on, so the conversation row lock alone decides which one starts the run.
+ */
+async function fireOnBoth(
+  data: IdleCompactionJobData,
+): Promise<Awaited<ReturnType<typeof fireOn>>[]> {
+  const queues = [a.app.get(RunQueue), b.app.get(RunQueue)];
+  const both = gate();
+  let arrived = 0;
+  for (const q of queues) {
+    const original = q.startIdleCompaction.bind(q);
+    q.startIdleCompaction = async (conversationId, armedSeq, mode) => {
+      if (++arrived === 2) both.open();
+      await both.promise;
+      return original(conversationId, armedSeq, mode);
+    };
+  }
+  try {
+    const outcomes = await Promise.all([fireOn(a, data), fireOn(b, data)]);
+    expect(arrived).toBe(2);
+    return outcomes;
+  } finally {
+    // the own property shadowed the prototype method: removing it restores the original
+    for (const q of queues)
+      delete (q as Partial<Pick<RunQueue, "startIdleCompaction">>).startIdleCompaction;
+  }
+}
+
+/** The conversation's idle compact runs, once there is one and all are completed. */
+const idleRunsCompleted = (conv: string) =>
+  waitFor(
+    async () => {
+      const rows = await idleRuns(conv);
+      return rows.length > 0 && rows.every((r) => r.status === "completed") ? rows : null;
+    },
+    30_000,
+    "the idle compact run completed",
+  );
 
 const runStatus = (runId: string, status: string) =>
   waitFor(
@@ -315,46 +391,43 @@ describe("manual compaction on two replicas", () => {
 describe("idle compaction on two replicas", () => {
   it("the same job fired concurrently on both replicas starts one idle compact run and writes one summary", async () => {
     const { conv, data } = await arm();
-    // both deliveries pass their unlocked checks and reach the start before either goes on: the
-    // conversation row lock alone decides which one starts the run
-    const queues = [a.app.get(RunQueue), b.app.get(RunQueue)];
-    const both = gate();
-    let arrived = 0;
-    for (const q of queues) {
-      const original = q.startIdleCompaction.bind(q);
-      q.startIdleCompaction = async (conversationId, armedSeq) => {
-        if (++arrived === 2) both.open();
-        await both.promise;
-        return original(conversationId, armedSeq);
-      };
-    }
-    let outcomes: Awaited<ReturnType<typeof fireOn>>[];
-    try {
-      outcomes = await Promise.all([fireOn(a, data), fireOn(b, data)]);
-    } finally {
-      // the own property shadowed the prototype method: removing it restores the original
-      for (const q of queues)
-        delete (q as Partial<Pick<RunQueue, "startIdleCompaction">>).startIdleCompaction;
-    }
-    expect(arrived).toBe(2);
+    const outcomes = await fireOnBoth(data);
     expect(outcomes.filter((o) => o === "started")).toHaveLength(1);
     expect(["obsolete", "busy"]).toContain(outcomes.find((o) => o !== "started"));
 
-    const runs = await waitFor(
-      async () => {
-        const rows = await idleRuns(conv);
-        return rows.length > 0 && rows.every((r) => r.status === "completed") ? rows : null;
-      },
-      30_000,
-      "the idle compact run completed",
-    );
+    const runs = await idleRunsCompleted(conv);
     expect(runs).toHaveLength(1);
+    expect(runs[0]?.idle_mode).toBe("cache");
     const events = await eventsOf(dbA, conv);
     const summaries = ev(events, "compaction_summary");
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.runId).toBe(runs[0]?.id);
     expect(ev(events, "usage").filter((e) => e.payload.purpose === "compaction")).toHaveLength(1);
     // a later delivery on either replica finds the run: obsolete
+    expect(await fireOn(b, data)).toBe("obsolete");
+    expect(await idleRuns(conv)).toHaveLength(1);
+  });
+
+  it("the same compaction-model job fired concurrently on both replicas starts one idle compact run and writes one summary on the compaction model", async () => {
+    const { conv, data } = await arm(cOrgId, cAgentId);
+    expect(data.mode).toBe("compaction_model");
+    const outcomes = await fireOnBoth(data);
+    expect(outcomes.filter((o) => o === "started")).toHaveLength(1);
+    expect(["obsolete", "busy"]).toContain(outcomes.find((o) => o !== "started"));
+
+    const runs = await idleRunsCompleted(conv);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.idle_mode).toBe("compaction_model");
+    const events = await eventsOf(dbA, conv);
+    const summaries = ev(events, "compaction_summary");
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.runId).toBe(runs[0]?.id);
+    expect(summaries[0]?.payload).toMatchObject({ method: "transcript", model: FAKE_C });
+    const usage = ev(events, "usage").filter((e) => e.payload.purpose === "compaction");
+    expect(usage.length).toBeGreaterThan(0);
+    for (const u of usage) expect(u.payload).toMatchObject(FAKE_C);
+    // a later delivery on either replica finds the run: obsolete
+    expect(await fireOn(a, data)).toBe("obsolete");
     expect(await fireOn(b, data)).toBe("obsolete");
     expect(await idleRuns(conv)).toHaveLength(1);
   });

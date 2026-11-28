@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import {
   DEVICE_SERVICE_MACH_CHROMIUM,
   DEVICE_SERVICE_MACH_ENV,
+  type DeviceServiceNetwork,
   type ExecResult,
-  type SandboxLimits,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
@@ -15,7 +15,12 @@ import {
 import type { MacWorkerHandle, MacWorkerRequest } from "../exec/operation-worker.js";
 import { shellQuote } from "../exec/shared.js";
 import { effectiveEgress, type SandboxEgress } from "../policy.js";
-import type { ServiceLaunch, ServiceLauncher, ServiceProcess } from "./supervisor.js";
+import {
+  loopbackKey,
+  type ServiceLaunch,
+  type ServiceLauncher,
+  type ServiceProcess,
+} from "./supervisor.js";
 
 /**
  * The longest time limit a worker timer holds (Node's 32-bit timer): a service runs at most this
@@ -45,7 +50,9 @@ export interface MacServiceLauncherOptions {
  * those, its read-only code directory, the workspace and the Node runtime's directory (all
  * checked against the owner's denies); the owner's denied read roots kept denied; the unix socket
  * in its state directory; and the device's network (the provider's limits) intersected with the
- * owner's ceiling as for an operation, no network when the provider sent none. It has no time
+ * owner's ceiling as for an operation, no network when the provider sent none, plus the loopback
+ * ports granted to the service while the owner's ceiling allows running outside the sandbox (a
+ * command never gets them). It has no time
  * limit of its own beyond {@link SERVICE_TIME_LIMIT_MS} and is stopped by cancelling the worker,
  * which also ends it when this program ends (the worker stops on disconnect). The launch records
  * the ceiling revision its grant was built under, so an owner reconcile stops it once the
@@ -55,7 +62,7 @@ export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLaunche
   /** The device's network intersected with the owner's ceiling now; undefined = none. */
   const egressOf = (
     ceiling: DeviceOwnerCeiling,
-    network: SandboxLimits["network"] | undefined,
+    network: DeviceServiceNetwork | undefined,
   ): SandboxEgress | undefined =>
     network
       ? effectiveEgress(
@@ -66,14 +73,24 @@ export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLaunche
           network,
         )
       : undefined;
+  /**
+   * The loopback ports a launch gets: the requested set only while the owner's ceiling allows
+   * running outside the sandbox (the ceiling bounds them on the machine too), none otherwise.
+   */
+  const loopbackPortsOf = (
+    ceiling: DeviceOwnerCeiling,
+    network: DeviceServiceNetwork | undefined,
+  ): readonly number[] => (ceiling.outsideSandbox ? (network?.loopbackPorts ?? []) : []);
   return {
     // the key of the effective egress, so a narrowed (or widened) owner ceiling restarts the
     // service at the next ensure, as a changed device network does
     async networkKey(network) {
-      const egress = egressOf(await o.readOwnerCeiling(), network);
+      const ceiling = await o.readOwnerCeiling();
+      const egress = egressOf(ceiling, network);
       if (!egress) return "none";
-      if (egress.kind === "open-public") return "open-public";
-      return `allowlist:${[...new Set(egress.hosts.map((h) => h.toLowerCase()))].sort().join(",")}`;
+      const loopback = loopbackKey(loopbackPortsOf(ceiling, network));
+      if (egress.kind === "open-public") return `open-public${loopback}`;
+      return `allowlist:${[...new Set(egress.hosts.map((h) => h.toLowerCase()))].sort().join(",")}${loopback}`;
     },
     async ceilingRevision() {
       return (await o.readOwnerCeiling()).revision;
@@ -96,12 +113,15 @@ export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLaunche
       const egress = egressOf(ceiling, req.network);
       const open = egress?.kind === "open-public";
       const hosts = egress?.kind === "allowlist" ? egress.hosts : [];
+      // ports apply only with a network at all (no network: the service gets none)
+      const loopbackPorts = egress ? loopbackPortsOf(ceiling, req.network) : [];
       const grant: LocalOperationGrant = {
         full: false,
         ...(open && { openNetwork: true }),
         readRoots: req.readRoots,
         writeRoots: req.writeRoots,
         hosts,
+        ...(loopbackPorts.length > 0 && { loopbackPorts: [...loopbackPorts] }),
         deniedReadRoots: [...ceiling.restrictedDeniedReadRoots],
         revision: ceiling.revision,
       };

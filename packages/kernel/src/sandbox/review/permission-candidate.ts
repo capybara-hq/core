@@ -237,10 +237,11 @@ export const commandCarriesCredentialConsent = (command: string, facts: ReviewFa
   );
 /**
  * Who decides one crossing (approval-only profiles design, "Profiles"): {@link approverForProfile},
- * except that an `outside-sandbox` escalation is never auto-granted when a sub-agent asks for it or
- * when it carries a credential consent ({@link isCredentialConsentRule}): `none` becomes
- * `review-model` (maintainer ruling 2026-11-19). Other sensitive consents (sudo, persistent
- * changes) stay automatic under Full access and are recorded.
+ * except that an `outside-sandbox` escalation or a `loopback-port` grant is never auto-granted when
+ * a sub-agent asks for it or when it carries a credential consent ({@link isCredentialConsentRule}):
+ * `none` becomes `review-model` (maintainer ruling 2026-11-19; loopback ports follow the same rule).
+ * Other sensitive consents (sudo, persistent changes) stay automatic under Full access and are
+ * recorded.
  */
 export function approverForCrossing(input: {
   profile: PermissionProfile;
@@ -252,7 +253,7 @@ export function approverForCrossing(input: {
   const approver = approverForProfile(input.profile);
   // only the person or the review model approves these escalations, never the agent tree itself
   return approver === "none" &&
-    input.crossing === "outside-sandbox" &&
+    (input.crossing === "outside-sandbox" || input.crossing === "loopback-port") &&
     (input.subAgent || input.credentialConsent === true)
     ? "review-model"
     : approver;

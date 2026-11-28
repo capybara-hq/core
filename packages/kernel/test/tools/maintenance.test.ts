@@ -247,6 +247,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
           return "obsolete";
         },
       },
+      { refresh: async (d) => void calls.push(["loopback-refresh", d]) },
     );
     const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;
     await processor.process(job("wait-timeout", { waitId: "w" }), "tok");
@@ -289,6 +290,8 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       expiresAt: 1,
     };
     await processor.process(job("idle-compaction", idle));
+    const loopback = { orgId: "o", deviceId: "d1", serviceId: "browser.daemon" };
+    await processor.process(job("device-loopback-refresh", loopback));
     await processor.process(job("sandbox-suspend-idle", {}));
     // an unknown name fails (BullMQ retries it, a newer replica knows it), never completes unrun
     await expect(processor.process(job("no-such-job", {}))).rejects.toThrow(
@@ -323,6 +326,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["trigger-dispatch", { orgId: "o", eventId: "e1" }],
       ["automation-coalesce", pair],
       ["idle-compaction", idle],
+      ["loopback-refresh", loopback],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([]);

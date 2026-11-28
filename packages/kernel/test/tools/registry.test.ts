@@ -466,6 +466,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
           idleEnabled: true,
           idleMinTokensFloor: 200000,
           idleMinWindowRatio: 0.3,
+          idleDelayMinutes: 30,
         },
         promptCache: { longTtl: false },
         outsideSandbox: { permission: "allowed", source: "default" },
