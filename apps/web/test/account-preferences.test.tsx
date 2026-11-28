@@ -159,7 +159,10 @@ describe("/account/preferences: idle compaction", () => {
     await vi.waitFor(() => expect(within(section).queryByText(m.orgOff)).not.toBeNull());
     expect(within(section).queryByRole("switch")).toBeNull();
   });
-  const guest = { ...ME, memberships: [{ ...ME.memberships[0], role: "guest" as const }] };
+  const guest: typeof ME = {
+    ...ME,
+    memberships: ME.memberships.map((m) => ({ ...m, role: "guest" as const })),
+  };
 
   it("keeps the switch disabled while the org setting loads, then enables it", async () => {
     const m = en.preferences.idleCompaction;
