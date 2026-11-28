@@ -7,6 +7,7 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { LockService } from "../infra/lock/lock.service.js";
 import { LoopbackLivePorts } from "./loopback-live-ports.js";
+import { PermissionFacts } from "./permission-facts.js";
 import { type DeviceServiceMethods, SandboxService } from "./sandbox.service.js";
 import type { SandboxUseContext } from "./use-context.js";
 
@@ -30,7 +31,12 @@ export const LOOPBACK_SET_LOCK_WAIT_MS = 60_000;
  * extension's service names, so the provider never sees a bare name two extensions could share.
  *
  * Every ensure sends the provider the service's live loopback port grants (browser loopback port
- * grants design §4: the whole sorted set, possibly empty; a provider without support ignores it).
+ * grants design §4: the whole sorted set), but only a non-empty set, and only while the device
+ * sandbox admits loopback ports (`DeviceSandbox.loopbackPorts`: the provider's support reports
+ * `network.loopbackPorts` and the ceilings allow running outside the sandbox). Otherwise
+ * `loopbackPorts` is left out, which closes every loopback port: a provider without support never
+ * sees the key, and a ceiling switched off narrows on the next ensure, before the refresh job
+ * revokes the grants.
  * Reading the set and sending it are one step per (device, service) across replicas (a
  * `LockService` lock taken outside any transaction): an ensure that read an older set can never
  * reach the device after one that read a newer set.
@@ -41,26 +47,31 @@ export class DeviceServices {
     @Inject(SandboxService) private readonly sandbox: SandboxService,
     @Inject(LoopbackLivePorts) private readonly loopback: Pick<LoopbackLivePorts, "livePorts">,
     @Inject(LockService) private readonly locks: Pick<LockService, "run">,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<PermissionFacts, "deviceSandboxFacts">,
   ) {}
 
   /**
    * Runs `send` with the service's live loopback ports under the (device, service) set lock: the
    * set is read after the lock is taken and the send finishes before it is released, so the
-   * sends reach the device in the order their sets were read. A lost lock aborts the send.
+   * sends reach the device in the order their sets were read. A lost lock aborts the send. The
+   * opts carry `loopbackPorts` only for a non-empty set the device sandbox admits (see the class).
    */
   private withLoopbackSet<T>(
     orgId: string,
     deviceId: string,
     name: string,
     signal: AbortSignal,
-    send: (loopbackPorts: number[], signal: AbortSignal) => Promise<T>,
+    send: (loopback: { loopbackPorts?: number[] }, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     return this.locks.run(
       `loopback-set-${deviceId}-${name}`,
       { ttlMs: LOOPBACK_SET_LOCK_TTL_MS, waitMs: LOOPBACK_SET_LOCK_WAIT_MS, signal },
       async (held) => {
         const ports = await this.loopback.livePorts(orgId, deviceId, name);
-        return send(ports, AbortSignal.any([signal, held.lost]));
+        const admitted =
+          ports.length > 0 && (await this.facts.deviceSandboxFacts(orgId, deviceId)).box.loopbackPorts;
+        return send(admitted ? { loopbackPorts: ports } : {}, AbortSignal.any([signal, held.lost]));
       },
     );
   }
@@ -84,10 +95,10 @@ export class DeviceServices {
       (h, p, sig) => {
         const ensure = p.ensureService as NonNullable<typeof p.ensureService>;
         // read under the use and the set lock, so a grant committed before it is in the set
-        return this.withLoopbackSet(use.orgId, use.deviceId, spec.name, sig, (loopbackPorts, s) =>
+        return this.withLoopbackSet(use.orgId, use.deviceId, spec.name, sig, (loopback, s) =>
           opts.ifRunning === true
-            ? ensure(h, nameOnlySpec(spec.name), s, { ifRunning: true, loopbackPorts })
-            : ensure(h, spec, s, { loopbackPorts }),
+            ? ensure(h, nameOnlySpec(spec.name), s, { ifRunning: true, ...loopback })
+            : ensure(h, spec, s, loopback),
         );
       },
       signal,
@@ -160,8 +171,8 @@ export class DeviceServices {
       async (p, h, sig) => {
         requireServices(p);
         const ensure = p.ensureService as NonNullable<typeof p.ensureService>;
-        return this.withLoopbackSet(orgId, deviceId, name, sig, (loopbackPorts, s) =>
-          ensure(h, nameOnlySpec(name), s, { ifRunning: true, loopbackPorts }),
+        return this.withLoopbackSet(orgId, deviceId, name, sig, (loopback, s) =>
+          ensure(h, nameOnlySpec(name), s, { ifRunning: true, ...loopback }),
         );
       },
       signal,

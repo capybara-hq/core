@@ -511,9 +511,12 @@ treats a dial-in device like any other (its provider, report and permission supp
   "device-update"`) and a dial-in device announces the `loopbackPorts` hello feature (`capybara-device`:
   macOS in `os` mode only). The kernel sends the whole sorted live set as
   `ensureService` opts `loopbackPorts` (`service.ensure` `network.loopbackPorts`, at most
-  `LOOPBACK_MAX_PORTS_PER_SERVICE`, parsed by `parseLoopbackPorts`) only to providers that claim it;
-  a changed set applies like changed network limits (the device folds the ports into `networkKey`,
-  so the service restarts), and absent or empty closes all. Only the exact hosts in
+  `LOOPBACK_MAX_PORTS_PER_SERVICE`, parsed by `parseLoopbackPorts`) only when the set is non-empty
+  and the device sandbox admits it (`DeviceSandbox.loopbackPorts`: the support claims it and the
+  ceilings allow running outside the sandbox; `DeviceServices`), else the key is absent; a provider
+  forwards it only to a machine that announced the feature. A changed set applies like changed
+  network limits (the device folds the ports into `networkKey`, so the service restarts), and
+  absent or empty closes all. Only the exact hosts in
   `LOOPBACK_GRANT_HOSTS` on a granted port open; other loopback addresses, private ranges and
   metadata stay closed, and the owner's outside-sandbox ceiling bounds the effective set. Grants
   live in `device_loopback_grants` (24 hours); every ensure sends the live set, and the outbox job

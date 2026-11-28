@@ -23,6 +23,7 @@ import { createLogger } from "../../src/log.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
 import { SandboxLockLostError } from "../../src/sandbox/leases.js";
 import { LoopbackLivePorts } from "../../src/sandbox/loopback-live-ports.js";
+import type { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import {
@@ -141,6 +142,8 @@ beforeAll(async () => {
 let svc: SandboxService;
 let services: DeviceServices;
 let locks: LockService;
+/** Whether the stubbed device sandbox admits loopback ports (`DeviceSandbox.loopbackPorts`). */
+let loopbackAdmitted: boolean;
 
 afterAll(async () => {
   redis?.disconnect();
@@ -179,7 +182,11 @@ beforeEach(async () => {
   // the live loopback ports read straight from the test's schema view (no transaction context)
   const kdb = Object.create(KernelDb.prototype, { db: { value: db } }) as KernelDb;
   locks = new LockService(redis, createLogger("error"));
-  services = new DeviceServices(svc, new LoopbackLivePorts(kdb), locks);
+  loopbackAdmitted = true;
+  const facts = {
+    deviceSandboxFacts: async () => ({ box: { loopbackPorts: loopbackAdmitted } }),
+  } as unknown as Pick<PermissionFacts, "deviceSandboxFacts">;
+  services = new DeviceServices(svc, new LoopbackLivePorts(kdb), locks, facts);
 });
 
 describe("device services", () => {
@@ -345,6 +352,27 @@ describe("device services", () => {
     ]);
     // the refresh of a loopback change applies no limits (no update of the instance)
     expect((await readFakeSandboxOps(root)).filter((o) => o[0] === "update")).toEqual([]);
+  });
+
+  it("leaves the set out when it is empty or the device sandbox does not admit loopback ports", async () => {
+    const sent: (readonly number[] | undefined)[] = [];
+    const ensure = provider.ensureService?.bind(provider);
+    if (!ensure) throw new Error("device-fake has services");
+    provider.ensureService = async (h, sp, sig, opts) => {
+      sent.push(opts?.loopbackPorts);
+      return ensure(h, sp, sig, opts);
+    };
+    await services.ensure(use(), spec(), signal());
+    await sql`INSERT INTO capybara.device_loopback_grants
+      (id, org_id, device_id, service_id, conversation_id, port, source, expires_at)
+      VALUES (${randomUUID()}, ${seed.orgId}, ${deviceId}, 'fake-ext.echo', ${seed.conversationId},
+        3999, 'owner-panel', now() + interval '1 hour')`.execute(raw);
+    await services.ensure(use(), spec(), signal());
+    // the support lost loopback ports, or a ceiling closed outside-sandbox running
+    loopbackAdmitted = false;
+    await services.ensure(use(), spec(), signal());
+    await services.refreshLoopback(seed.orgId, deviceId, "fake-ext.echo", signal());
+    expect(sent).toEqual([undefined, [3999], undefined, undefined]);
   });
 
   it("a send of an older set never reaches the device after a newer one", async () => {
