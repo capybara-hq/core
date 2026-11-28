@@ -38,11 +38,12 @@ A **theme** (a plugin's contribution, spec `docs/superpowers/specs/2026-11-08-th
 | Token | Dark | Light | Purpose |
 |---|---|---|---|
 | `bg` | `#0A0A0A` | `#FDFDFC` | The paper: the page, the conversation and the right panel from 600 up (§4), and every compact page |
-| `panel` | `#111110` | `#F6F5F1` | Cards on the paper: object cards and lists, tables, stat cards, form section fields, property sections, the tool box, code and io; one step from the paper toward the middle (layered shell rule 3) |
-| `panel-2` | `#0E0E0D` | `#FAF9F6` | Half a step from the paper toward `panel`: action row, right-panel ground as a sheet, code inside a box |
+| `panel` | `#111110` | `#F9F8F5` | Cards on the paper: object cards and lists, tables, stat cards, form section fields, property sections, the tool box, code and io; one step from the paper toward the middle (layered shell rule 3) |
+| `panel-2` | `#0E0E0D` | `#FBFAF8` | Half a step from the paper toward `panel`: action row, right-panel ground as a sheet, code inside a box |
 | `sidebar` | `#171716` | `#EDECE7` | The ground: the sidebar and the shell's gutters from 600 up (§4) |
 | `sidebar-active` | `rgba(255,255,255,0.07)` | `rgba(26,26,24,0.09)` | Current nav item or conversation in the sidebar |
 | `raised` | `#141413` | `#FFFFFF` | What floats over the paper: menus, popovers, dialogs, sheets, drawers, the palette, tooltips, toasts, floating inline cards, the composer; one step beyond `panel` |
+| `field` | `rgba(0,0,0,0)` | `#FFFFFF` | The ground of a form control (inputs, textareas, selects, steppers, the segmented track, checkbox and radio boxes): white in light so a control reads on a card, clear in dark |
 | `selected` | `#21211F` | `rgba(26,26,24,0.07)` | Selection ground: selected segment, filter chip, option card, the palette's current row, the waterfall's selected row; avatar, skeleton bars |
 | `hover` | `rgba(255,255,255,0.04)` | `rgba(26,26,24,0.045)` | Hover ground, disabled input ground |
 | `line-soft` | `#1C1C1A` | `#E8E7E2` | Column dividers, table row dividers, the action row's top line, disabled borders |
@@ -61,7 +62,7 @@ A **theme** (a plugin's contribution, spec `docs/superpowers/specs/2026-11-08-th
 | `accent-tint` | accent @ 12% | accent @ 12% | Tinted accent ground (selected row) |
 | `focus-ring` | `rgba(255,106,19,.25)` | `rgba(204,70,9,.18)` | 3px input focus halo (§2.5) |
 | `ok` | `#3FD483` | `#16803F` | Success (rarely shown: success is not colored, §1) |
-| `fail` | `#FF5C52` | `#C02D27` | Failure, error, danger |
+| `fail` | `#FF5C52` | `#C42E28` | Failure, error, danger |
 | `warn` | `#F2C14B` | `#8F6500` | Needs a person: pending approval, unsaved, needs authorization |
 | `scrim` | `rgba(0,0,0,.60)` | `rgba(10,10,10,.25)` | Behind dialogs and sheets |
 | `lightbox` | `rgba(0,0,0,.88)` | `rgba(10,10,10,.80)` | Behind the image viewer (§6.16.20): a heavier dim than `scrim`, the image is the page |

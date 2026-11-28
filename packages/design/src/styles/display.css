@@ -127,6 +127,7 @@
   gap: 2px;
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-sm);
+  background: var(--cb-field);
 }
 .cb-segmented[data-density="dense"] {
   height: var(--cb-control-dense);

@@ -4776,7 +4776,7 @@ export const THEME_LIMITS: {
 
 // @public
 export const THEME_OVERRIDABLE: {
-    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "lightbox", "float-ground", "float-line", "diff-add", "diff-del"];
+    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "field", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "lightbox", "float-ground", "float-line", "diff-add", "diff-del"];
     readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float", "shadow-float-touch"];
     readonly radius: readonly ["sm", "md", "bubble"];
 };
@@ -4793,11 +4793,11 @@ export const THEME_TOKENS: {
         };
         readonly panel: {
             readonly dark: "#111110";
-            readonly light: "#F6F5F1";
+            readonly light: "#F9F8F5";
         };
         readonly "panel-2": {
             readonly dark: "#0E0E0D";
-            readonly light: "#FAF9F6";
+            readonly light: "#FBFAF8";
         };
         readonly sidebar: {
             readonly dark: "#171716";
@@ -4809,6 +4809,10 @@ export const THEME_TOKENS: {
         };
         readonly raised: {
             readonly dark: "#141413";
+            readonly light: "#FFFFFF";
+        };
+        readonly field: {
+            readonly dark: "rgba(0,0,0,0)";
             readonly light: "#FFFFFF";
         };
         readonly selected: {
@@ -4885,7 +4889,7 @@ export const THEME_TOKENS: {
         };
         readonly fail: {
             readonly dark: "#FF5C52";
-            readonly light: "#C02D27";
+            readonly light: "#C42E28";
         };
         readonly warn: {
             readonly dark: "#F2C14B";

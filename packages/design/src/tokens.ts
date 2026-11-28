@@ -8,6 +8,7 @@ export const TOKEN_NAMES = [
   "sidebar",
   "sidebar-active",
   "raised",
+  "field",
   "selected",
   "hover",
   "line-soft",
