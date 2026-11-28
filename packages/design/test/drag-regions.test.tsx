@@ -433,6 +433,69 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     ).toEqual([]);
   });
 
+  it("the paper drops with the rail: the band is ground across the window, the paper below it", () => {
+    const css$ = css("shell-environment.css");
+    expect(css$).toMatch(
+      /@property --cb-shell-paper-drop \{[^}]*syntax: "<length>";[^}]*initial-value: 0px;/,
+    );
+    // the drop is the rail's, set only in the rail's form from 600 up and never with a banner
+    const drops = rules().filter((r) => r.decls["--cb-shell-paper-drop"] !== undefined);
+    expect(drops.map((r) => r.at).sort()).toEqual([
+      "(min-width: 600px)",
+      "(min-width: 600px) and (max-width: 840px)",
+      "(min-width: 841px)",
+    ]);
+    for (const r of drops) {
+      expect(r.decls["--cb-shell-paper-drop"]).toBe("var(--cb-shell-rail-drop)");
+      expect(r.selector).toContain('.cb-shell:not([data-banner="true"]):has(');
+      expect(r.selector).toContain(".cb-sidebar[data-");
+      expect(r.selector).not.toContain('data-mode="full"');
+    }
+    expect(drops.find((r) => r.at === "(min-width: 841px)")?.selector).toContain(
+      '[data-collapsed="true"]',
+    );
+    // the content column (and so its paper, or the conversation's two papers) starts below the band
+    expect(
+      decl(
+        ':root[data-shell="desktop"] .cb-shell > .cb-shell-column',
+        "padding-top",
+        "(min-width: 600px)",
+      ),
+    ).toBe("var(--cb-shell-paper-drop)");
+    // below the band the column has no top row, and the paper keeps clear of no controls
+    const PAPER_QUERY = "not style(--cb-shell-paper-drop: 0px)";
+    for (const v of ["--cb-shell-row", "--cb-shell-row-start", "--cb-shell-row-end"]) {
+      expect(decl(':root[data-shell="desktop"] .cb-shell > .cb-shell-column', v, PAPER_QUERY)).toBe(
+        "0px",
+      );
+    }
+    for (const v of [
+      "--cb-shell-reserve-start",
+      "--cb-shell-reserve-end",
+      "--cb-shell-column-reserve",
+    ]) {
+      expect(
+        decl(':root[data-shell="desktop"] .cb-shell-column > .cb-shell-main', v, PAPER_QUERY),
+      ).toBe("0px");
+    }
+    // the column keeps its reserve: the gutter above the paper still starts after the toggle
+    expect(
+      rules().filter(
+        (r) =>
+          r.selector.endsWith(".cb-shell-column") && r.decls["--cb-shell-column-reserve"] === "0px",
+      ),
+    ).toEqual([]);
+    // no paper rule reads the drop in the full sidebar's form or below 600
+    expect(
+      rules().filter(
+        (r) =>
+          /paper-drop/.test(Object.values(r.decls).join()) &&
+          (/data-mode="full"/.test(r.selector) ||
+            /not all and \(min-width: 600px\)/.test(r.at ?? "")),
+      ),
+    ).toEqual([]);
+  });
+
   it("no hairline closes the band where the rail drops: band, rail and gutters are one ground", () => {
     const pseudo = parseCss(css("shell-environment.css")).filter(
       (r) => /::(after|before)/.test(r.selector) && /\.cb-shell\b/.test(r.selector),
@@ -969,6 +1032,11 @@ describe("the paper's top gutter in the desktop shell (layered shell spec §5)",
     expect(
       wide.find((r) => r.selector === ':root[data-shell="desktop"] .cb-shell-gutter')?.decls.left,
     ).toBe("var(--cb-shell-column-reserve, 0px)");
+    // where the paper drops below the band, the gutter reaches down to the paper: the band's empty
+    // ground after the toggle drags the window
+    expect(
+      wide.find((r) => r.selector === ':root[data-shell="desktop"] .cb-shell-gutter')?.decls.height,
+    ).toBe("calc(var(--cb-space-2) + var(--cb-shell-paper-drop))");
     // and the toggle is a no-drag root as well (a later no-drag region cuts it out of a filler)
     const roots = rules.filter(
       (r) =>
@@ -985,7 +1053,9 @@ describe("the paper's top gutter in the desktop shell (layered shell spec §5)",
     const tall = wide.find(
       (r) => r.selector.includes("> .cb-shell-gutter") && r.selector.includes(":has("),
     );
-    expect(tall?.decls.height).toBe("max(var(--cb-space-2), var(--cb-shell-row))");
+    expect(tall?.decls.height).toBe(
+      "calc(max(var(--cb-space-2), var(--cb-shell-row)) + var(--cb-shell-paper-drop))",
+    );
     expect(
       wide.find(
         (r) =>

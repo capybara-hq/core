@@ -12,6 +12,13 @@
   inherits: true;
   initial-value: 0px;
 }
+/* How far the paper starts below its usual place: the rail drop in the rail's form from 600 up,
+   else 0 (below). Registered for the same reason. */
+@property --cb-shell-paper-drop {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
 /* The compact flat title bar's height (below): the top row's height below 600 inside the desktop
    shell with reported controls, else 0. Registered for the same reason. */
 @property --cb-shell-flat {
@@ -252,6 +259,53 @@
     display: none;
   }
 }
+/* The paper drops with the rail (layered shell spec §2, §5): in the rail's form from 600 up, where
+   the rail drops below the band, the band is ground across the whole window (the lights and the
+   band's sidebar toggle on it) and the content column starts below it, so its paper (the
+   conversation's two papers alike) lies space.2 below the band as it lies space.2 below the
+   window's top edge elsewhere. The rail's form follows the visible sidebar as `--cb-shell-lead`
+   does; the full sidebar, a banner, compact and a window without start controls past the rail keep
+   0. Nothing in the paper shares the top row any more: below the drop the column has no top row,
+   and the paper keeps clear of no controls (the gutter above it keeps the column's reserve, so the
+   band's toggle is never under it). */
+@media (min-width: 600px) {
+  :root[data-shell="desktop"]
+    .cb-shell:not([data-banner="true"]):has(
+      > .cb-sidebar[data-mode="rail"]:not([data-responsive="true"])
+    ) {
+    --cb-shell-paper-drop: var(--cb-shell-rail-drop);
+  }
+  :root[data-shell="desktop"] .cb-shell > .cb-shell-column {
+    padding-top: var(--cb-shell-paper-drop);
+  }
+}
+@media (min-width: 600px) and (max-width: 840px) {
+  :root[data-shell="desktop"]
+    .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-responsive="true"]) {
+    --cb-shell-paper-drop: var(--cb-shell-rail-drop);
+  }
+}
+@media (min-width: 841px) {
+  :root[data-shell="desktop"]
+    .cb-shell:not([data-banner="true"]):has(
+      > .cb-sidebar[data-responsive="true"][data-collapsed="true"]
+    ) {
+    --cb-shell-paper-drop: var(--cb-shell-rail-drop);
+  }
+}
+@container not style(--cb-shell-paper-drop: 0px) {
+  :root[data-shell="desktop"] .cb-shell > .cb-shell-column {
+    --cb-shell-row: 0px;
+    --cb-shell-row-start: 0px;
+    --cb-shell-row-end: 0px;
+  }
+  :root[data-shell="desktop"] .cb-shell-column > .cb-shell-main {
+    --cb-shell-reserve-start: 0px;
+    --cb-shell-reserve-end: 0px;
+    --cb-shell-column-reserve: 0px;
+  }
+}
+
 /* Where the rail drops below the band no hairline closes the band: the band, the rail and the
    gutters are one ground (layered shell spec §2), and a line there would cut across the paper. */
 
@@ -322,6 +376,7 @@
      padding above), so no control lies under it. */
   :root[data-shell="desktop"] .cb-shell-gutter {
     left: var(--cb-shell-column-reserve, 0px);
+    height: calc(var(--cb-space-2) + var(--cb-shell-paper-drop));
   }
   :root[data-shell="desktop"]
     .cb-shell-column:has(
@@ -332,7 +387,7 @@
         )
     )
     > .cb-shell-gutter {
-    height: max(var(--cb-space-2), var(--cb-shell-row));
+    height: calc(max(var(--cb-space-2), var(--cb-shell-row)) + var(--cb-shell-paper-drop));
   }
   :root[data-shell="desktop"]
     .cb-shell-main
