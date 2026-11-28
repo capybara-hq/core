@@ -73,6 +73,7 @@ import { BOARD_BLOCKS } from "./board-blocks";
 import { BOX_BLOCKS } from "./box-blocks";
 import { BRAND_REFERENCE_BLOCKS } from "./brand-blocks";
 import { CARD_GRID_BLOCKS } from "./card-grid-blocks";
+import { COMPOSER_EDITOR_BLOCKS } from "./composer-editor-blocks";
 import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
@@ -1410,6 +1411,7 @@ export const REFERENCE_BLOCKS = {
   ...BRAND_REFERENCE_BLOCKS,
   ...CONVERSATION_BLOCKS,
   ...CONVERSATION_PAGE_BLOCKS,
+  ...COMPOSER_EDITOR_BLOCKS,
   "no-access": noAccessBlocks,
   "danger-zone": dangerZoneBlocks,
   "content-section": contentSectionBlocks,
