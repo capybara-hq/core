@@ -20,7 +20,7 @@ import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { ExecutionRevoked } from "../../src/runtime/run-execution.js";
 import { type IdleCompactionIntent, RunFinish } from "../../src/runtime/run-finish.js";
-import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
+import { RUN_HOOKS, type RunHooks, RunWorker } from "../../src/runtime/run-worker.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -87,8 +87,11 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE],
-        // one step: a tool call ends the run `max_steps` (after the wrap-up call)
-        runtime: { maxSteps: 1 },
+        // one step: a tool call ends the run `max_steps` (after the wrap-up call); keep the
+        // production 30 s lease TTL because this suite sends 220k-char histories and does not test
+        // lease expiry (runConfig's 2 s TTL can lapse under CI load during IdleArm.decide, causing
+        // RunWorker to skip RunFinish.finish and requeue a run that `between` already marked terminal)
+        runtime: { maxSteps: 1, jobLockMs: 30_000 },
         extensionConfig: {
           "model-fake": {
             models: [
@@ -273,14 +276,29 @@ async function finishAfter(between: (runId: string, conv: string) => Promise<voi
   });
   const finisher = k.app.get(RunFinish);
   const finish = finisher.finish.bind(finisher);
-  const settled = new Promise<PromiseSettledResult<number | null>>((resolve) => {
+  const worker = k.app.get(RunWorker);
+  const processJob = worker.process.bind(worker);
+  let finishCalled = false;
+  const settled = new Promise<PromiseSettledResult<number | null>>((resolve, reject) => {
     vi.spyOn(finisher, "finish").mockImplementation((a) => {
+      finishCalled = true;
       const r = finish(a);
       r.then(
         (value) => resolve({ status: "fulfilled", value }),
         (reason: unknown) => resolve({ status: "rejected", reason }),
       );
       return r;
+    });
+    vi.spyOn(worker, "process").mockImplementation(async (job, token) => {
+      try {
+        return await processJob(job, token);
+      } finally {
+        if (job.data.conversationId === conv && intents.length > 0 && !finishCalled) {
+          reject(
+            new Error("worker process ended after IdleArm.decide without calling RunFinish.finish"),
+          );
+        }
+      }
     });
   });
   await postMessage(owner, orgId, conv, "echo:ok");
