@@ -1291,6 +1291,10 @@ span.cb-title-btn {
   flex-direction: column;
   gap: var(--cb-space-2);
 }
+/* In a pane without padding: the padded right panel body's inset (`.cb-rpanel-body[data-pad="pad"]`). */
+.cb-skeleton-list[data-inset="pane"] {
+  padding: var(--cb-space-4);
+}
 
 /* Task list (a checklist extension view; todo's card, section and panel). */
 .cb-task-list {

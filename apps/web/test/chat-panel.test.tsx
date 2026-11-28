@@ -321,6 +321,27 @@ describe("嵌入应用（第二档）", () => {
     expect(container.querySelector("iframe")).toBe(frame);
   });
 
+  it("a filling embed (the right panel's flush body) loads with inset panel bars", async () => {
+    stubApi({
+      [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
+      [`POST ${UI}/embeds/board/live/token`]: () => new Promise<Response>(() => {}),
+    });
+    const { container } = render(
+      <QueryClientProvider client={testQueryClient()}>
+        <NextIntlClientProvider locale="en" messages={en}>
+          <DesignProvider locale="en" link={Link as LinkComponent}>
+            <ToastProvider>
+              <EmbedTab orgId="o1" plugin="board" id="live" title="Live" fill />
+            </ToastProvider>
+          </DesignProvider>
+        </NextIntlClientProvider>
+      </QueryClientProvider>,
+    );
+    const bars = container.querySelector('[data-part="skeleton-list"]');
+    expect(bars?.getAttribute("data-inset")).toBe("pane");
+    expect(container.querySelector(".cb-skeleton")).toBeNull();
+  });
+
   it("组织页面 /p/<plugin>/<id>：kind embed 渲染沙箱 iframe（不带 conversationId，不开组织流）", async () => {
     params.current = { plugin: "board", id: "live" };
     const calls = stubApi({
