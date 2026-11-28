@@ -12,7 +12,7 @@ import { isSafeAttachmentHref } from "../display/attachments";
 import { Avatar } from "../display/avatar";
 import type { PersonLike } from "../display/person-name";
 import { Icon } from "../icons/icon";
-import { useDesignT } from "../provider";
+import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { fillCopy } from "./tool-copy";
 
 export type UserBubbleProps = {
@@ -202,7 +202,9 @@ export function UserBubble({
 
 export type BubbleAttachment = {
   id: string;
-  kind: "image" | "file";
+  /** `conversation`: a referenced conversation, a link chip to `href` (§6.16.6). */
+  kind: "image" | "file" | "conversation";
+  /** The file's name, or the conversation's title (empty: 未命名会话 / Untitled conversation). */
   name: string;
   /** Type badge (e.g. "PDF"). */
   type?: string;
@@ -212,10 +214,54 @@ export type BubbleAttachment = {
   src?: string;
   /** `false`: no download button for this file (a resource mention, not an upload). */
   downloadable?: boolean;
+  /** A conversation's page (`/chat/<id>`), opened through the DesignProvider's `link`. */
+  href?: string;
 };
 
+/** A referenced conversation in a sent message (§6.16.6): a link chip, no download button. */
+function ConversationChip({ item }: { item: BubbleAttachment }): JSX.Element {
+  const t = useDesignT();
+  const Link = useDesignLink();
+  const title = item.name || t("attachment.conversationUntitled");
+  const body = (
+    <>
+      <span className="cb-attachment-icon" data-part="attachment-icon">
+        <Icon name="chats" size={14} />
+      </span>
+      <span className="cb-bubble-file-name" data-part="attachment-name">
+        {title}
+      </span>
+    </>
+  );
+  if (item.href === undefined || !isSafeAttachmentHref(item.href)) {
+    return (
+      <span
+        className="cb-bubble-file cb-bubble-conv"
+        data-part="attachment"
+        data-kind="conversation"
+      >
+        {body}
+      </span>
+    );
+  }
+  return (
+    <Link
+      href={item.href}
+      className="cb-bubble-file cb-bubble-conv"
+      data-part="attachment"
+      data-kind="conversation"
+      aria-label={fillCopy(t("attachment.openConversation"), { title })}
+      title={title}
+    >
+      {body}
+      <LinkPendingMark />
+    </Link>
+  );
+}
+
 /**
- * Attachments of a sent message: image thumbnails, then file chips, each opening on click. With
+ * Attachments of a sent message: image thumbnails, then file chips, each opening on click, and
+ * referenced conversations as link chips (in the page's order among the files). With
  * `onDownload`, each downloadable file chip has a download icon button after it (its own button:
  * it never opens the file).
  */
@@ -224,18 +270,21 @@ export function BubbleAttachments({
   onOpen,
   onDownload,
   onImageError,
+  form,
 }: {
   items: BubbleAttachment[];
   onOpen?(id: string): void;
   onDownload?(id: string): void;
   /** A thumbnail failed to load (the caller may refresh the session and change `src`). */
   onImageError?(id: string): void;
+  /** The reference set and catalog only: draw the compact form in a wide window. */
+  form?: "compact";
 }): JSX.Element {
   const t = useDesignT();
   const images = items.filter((a) => a.kind === "image");
-  const files = items.filter((a) => a.kind === "file");
+  const files = items.filter((a) => a.kind !== "image");
   return (
-    <div className="cb-bubble-atts">
+    <div className="cb-bubble-atts" data-form={form}>
       {images.length > 0 ? (
         <div className="cb-bubble-thumbs">
           {images.map((a) => (
@@ -261,6 +310,7 @@ export function BubbleAttachments({
         </div>
       ) : null}
       {files.map((a) => {
+        if (a.kind === "conversation") return <ConversationChip key={a.id} item={a} />;
         const chip = (
           <button
             type="button"

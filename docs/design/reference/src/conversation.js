@@ -336,7 +336,25 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
   const personName = (name) =>
     `<span class="r-person-name" data-part="person-name" data-size="16"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="16" aria-hidden="true">${esc([...name][0].toUpperCase())}</span><span class="r-person-name-text" data-part="person-name-text" title="${esc(name)}">${esc(name)}</span></span>`;
 
+  /** A referenced conversation's chip (§6.16.6, §6.16.21): the chats icon, then the title. */
+  function convChip(r, o = {}) {
+    const title = r.title || "未命名会话";
+    const remove = o.remove ? `<button class="r-icon-btn" data-step="dense" aria-label="移除 ${esc(title)}">${icon("x", 12)}</button>` : "";
+    const error = o.error ? `<span class="r-fail-word" role="alert">${esc(o.error)}</span>` : "";
+    const tag = o.link ? "a" : "span";
+    const href = o.link ? ` href="${esc(r.href)}" aria-label="打开会话 ${esc(title)}"` : "";
+    return `<${tag} class="r-achip r-convchip" data-kind="conversation"${o.error ? " data-rejected" : ""}${o.wrap ? " data-wrap" : ""}${href}><span class="r-convchip-icon">${icon("chats", 14)}</span><span class="r-convchip-title">${esc(title)}</span>${error}${remove}</${tag}>`;
+  }
+
   function userBubble(o) {
+    const R = F.CONVERSATION_REF_FIXTURE;
+    if (o.state === "conversation" || o.state === "compact-conversation") {
+      // at-conversation spec §3: link chips above the bubble; compact: own line, the title wraps
+      const compact = o.state === "compact-conversation";
+      const refs = compact ? [R.long] : R.refs;
+      const atts = `<div class="r-uatts" data-conv>${refs.map((r) => convChip(r, { link: true, wrap: compact })).join("")}</div>`;
+      return `<div class="r-ucol">${atts}<div class="r-bubble">${esc(R.message)}</div></div>`;
+    }
     const withAtts = o.state === "attachments";
     const atts = withAtts
       ? `<div class="r-uatts"><div class="r-row-tight">${attachmentChip(FI.attachments[0])}${attachmentChip(FI.attachments[0])}</div>${attachmentChip(FI.attachments[1])}</div>`
@@ -901,8 +919,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
     const M = F.COMPOSER_MENU_FIXTURE;
     if (o.state === "compact") return composerMenuSheet();
     const kind = { plus: "plus", slash: "slash" }[o.state] ?? "at";
-    const groups = { plus: M.plus, slash: M.slash, at: M.at }[o.state] ?? [];
-    const value = { plus: "", slash: "/", at: `对比一下 @${M.atQuery}`, empty: `@${M.emptyQuery}`, loading: `@${M.atQuery}` }[o.state];
+    // conversations: the @ menu's 会话 group after the files (at-conversation spec §3)
+    const groups = { plus: M.plus, slash: M.slash, at: M.at, conversations: [M.at[0], M.conversations] }[o.state] ?? [];
+    const value = { plus: "", slash: "/", at: `对比一下 @${M.atQuery}`, conversations: `对比一下 @${M.atQuery}`, empty: `@${M.emptyQuery}`, loading: `@${M.atQuery}` }[o.state];
     const key = (k, label) => `<span class="r-cmm-key">${esc(k)}</span> ${esc(label)}`;
     const sw = (k, label, on) => `<button class="r-cmm-switch" data-part="composer-menu-switch" aria-pressed="${on}">${key(k, label)}</button>`;
     const dot = '<span aria-hidden="true">·</span>';
@@ -1208,6 +1227,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
   }
 
   function attachmentStrip(o) {
+    const R = F.CONVERSATION_REF_FIXTURE;
+    if (o.state === "conversation")
+      return `<div class="r-astrip">${[R.refs[0], R.long].map((r) => convChip(r, { remove: true })).join("")}</div>`;
+    if (o.state === "conversation-refused")
+      return `<div class="r-astrip">${convChip(R.refused.ref, { remove: true, error: R.refused.error })}</div>`;
     const A = FI.attachments;
     const pick = { image: A[0], file: A[1], uploading: A[2], rejected: A[3] }[o.state];
     let item;
@@ -1563,7 +1587,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
     "right-panel": rightPanel,
     "file-card": (o) => col(fileCardBlock(o)),
     "file-outputs": (o) => col(fileOutputs(o)),
-    "attachment-strip": (o) => col(`<div class="r-composer">${attachmentStrip(o)}<div class="r-composer-input r-faint">帮我对一下这几个文件</div></div>`),
+    "attachment-strip": (o) => col(`<div class="r-composer">${attachmentStrip(o)}<div class="r-composer-input r-faint">${o.state.startsWith("conversation") ? esc(F.CONVERSATION_REF_FIXTURE.message) : "帮我对一下这几个文件"}</div></div>`),
     "file-preview": filePreview,
     "html-frame": htmlFrame,
     "shared-file-page": sharedPage,

@@ -368,7 +368,9 @@ export function FileChip({ path, onOpen }: { path: string; onOpen(): void }): JS
 
 export type AttachmentStripItem = {
   id: string;
-  kind: "image" | "file";
+  /** `conversation`: a referenced conversation (§6.16.21): the `chats` icon and its title. */
+  kind: "image" | "file" | "conversation";
+  /** The file's name, or the conversation's title (empty: 未命名会话 / Untitled conversation). */
   name: string;
   contentType?: string;
   /** Bytes; absent when unknown (a referenced file that is not an upload): no size shown. */
@@ -377,7 +379,10 @@ export type AttachmentStripItem = {
   src?: string;
   /** Upload progress 0–1 while uploading. */
   progress?: number;
-  /** Why it was rejected (too large, wrong type, too many): shown in `fail` instead of the size. */
+  /**
+   * Why it was rejected (too large, wrong type, too many; a conversation the kernel refused):
+   * shown in `fail` instead of the size.
+   */
   error?: string;
   onRemove?(): void;
   /** A rejected upload that can be sent again (a transfer failure, not a precheck). */
@@ -386,7 +391,8 @@ export type AttachmentStripItem = {
 
 /**
  * The composer's attachments (§6.16.21): image thumbnails with a round remove button, file chips
- * (badge, name, size, remove), a progress bar while uploading, a `fail` border when rejected.
+ * (badge, name, size, remove), a progress bar while uploading, a `fail` border when rejected, and
+ * referenced conversations (the `chats` icon, the title, a `fail` border when refused).
  */
 export function AttachmentStrip({ items }: { items: AttachmentStripItem[] }): JSX.Element {
   const t = useDesignT();
@@ -394,6 +400,38 @@ export function AttachmentStrip({ items }: { items: AttachmentStripItem[] }): JS
   return (
     <div className="cb-attachment-strip" data-part="attachment-strip">
       {items.map((a) => {
+        if (a.kind === "conversation") {
+          const title = a.name || t("attachment.conversationUntitled");
+          return (
+            <span
+              key={a.id}
+              className="cb-strip-chip"
+              data-part="attachment"
+              data-kind="conversation"
+              data-state={a.error ? "rejected" : "ready"}
+            >
+              <span className="cb-attachment-icon" data-part="attachment-icon">
+                <Icon name="chats" size={14} label={t("attachment.conversation")} />
+              </span>
+              <span className="cb-strip-name" data-part="attachment-name" title={title}>
+                {title}
+              </span>
+              {a.error ? (
+                <span className="cb-fail-word" role="alert">
+                  {a.error}
+                </span>
+              ) : null}
+              {a.onRemove ? (
+                <IconButton
+                  density="dense"
+                  icon={<Icon name="x" size={12} />}
+                  label={removeLabel(title)}
+                  onClick={a.onRemove}
+                />
+              ) : null}
+            </span>
+          );
+        }
         const state = a.error ? "rejected" : a.progress !== undefined ? "uploading" : "ready";
         const pct = Math.max(0, Math.min(100, Math.round((a.progress ?? 0) * 100)));
         if (a.kind === "image" && !a.error) {

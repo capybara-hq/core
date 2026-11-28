@@ -2458,6 +2458,45 @@ textarea {
   gap: var(--cb-space-2);
   margin-bottom: var(--cb-space-2);
 }
+/* A referenced conversation (§6.16.6, §6.16.21): the chats icon and the title, at most
+   layout.file-card; in the bubble a link chip, and at compact its title wraps. */
+/* the design's attachments column is at most 75% of the thread, like the bubble */
+.r-uatts[data-conv] {
+  max-width: 75%;
+}
+.r-convchip {
+  max-width: var(--cb-layout-file-card);
+  min-width: 0;
+  color: var(--cb-ink);
+  text-decoration: none;
+}
+.r-convchip-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-muted);
+}
+.r-convchip-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-convchip > .r-fail-word,
+.r-convchip > .r-icon-btn {
+  flex: none;
+}
+.r-convchip[data-wrap] {
+  align-items: flex-start;
+  max-width: 100%;
+}
+.r-convchip[data-wrap] .r-convchip-icon {
+  align-items: center;
+  min-height: var(--cb-type-small-line);
+}
+.r-convchip[data-wrap] .r-convchip-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 /* ── Run dividers ── */
 
