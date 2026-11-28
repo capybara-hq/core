@@ -1,5 +1,57 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.116
+
+### Patch Changes
+
+- b41536f: Deleting a plugin from the platform catalog switches off the connectors its connector templates
+  made, as an uninstall does (endpoint and credentials kept). Importing the same plugin again moves
+  those connectors to the new catalog item, so they show their icon and description again, and the
+  new item's install switches back on the ones the delete switched off; one an org admin disabled by
+  hand stays off.
+- 7651f27: Channels: a connection's last error is cleared once the connection has held for a lease period, so
+  a failure it recovered from (such as a network error while it first connected) no longer stays on
+  its page next to "running".
+- 3b6a67c: A connector named with an inline token loads its tools under tool search: request building adds the
+  mention's recorded `loadedTools` to the loaded set, from that message on.
+- c94a643: A message may carry `tokens` (connectors, connector resources, library files, project files,
+  conversations), each marked in `text` with U+FFFC, beside the older reference fields (not both).
+  The kernel resolves them as the sender before writing: each marker becomes an English placeholder
+  (`[connector: Slack]`, `[resource: … from …]`, `[file: …]`, `[project file: …]`,
+  `[conversation: …]`), a named connector adds a mention block (a connector of at most 20 tools
+  records its tool keys, loaded from that message by steps that run with tool search), and
+  `payload.inline` / `payload.connectorMentions` record them. Every file block, uploads included, is
+  now preceded by a `[file: <name>]` line, which conversation bubbles never show, and a resource block
+  says "from the connector". New refusals: `conversation.connector_unavailable`
+  (`not_found`, `needs_config`, `not_offered`) and `connector.resource_unreadable` (`ui_template`,
+  `empty`), with zh / en copy.
+- 87a51b6: Breaking: the message body (send, create's `message`, first message) no longer takes
+  `attachments`, `projectFiles` or `conversationRefs`; references are `tokens` only. Text may be empty
+  only with a skill, or with uploads and no tokens. `GET /orgs/:orgId/connectors/resources` requires
+  `connectorId` and lists that one connector's resources (the all-connectors listing is gone).
+  That listing answers `{resources}` only (no `unavailable`). A message's resource refusals
+  (`connector.resources_disabled`, `connector.not_found`) name the connector in `details`, and
+  `conversation.project_file_unavailable` names each missing path whole. The queue takes no `@`
+  resources any more (only leftover rows carry them).
+- 40cf427: Run a plan-only networkBlocked pass for other refused hosts when a browser tool call creates a loopback port ask, so their notes and `network_blocked` event are kept on that attempt.
+- 4ee14be: Keep the opening message (including its event block) when manually compacting an `automation_event` run.
+- ecfef5f: Add `GET /api/v1/orgs/:orgId/agents/:agentId/mentionable-connectors`: the connectors the web input
+  box's `@` menu offers for an agent (live, active connectors the agent has tools of, plus the
+  `needs_config` ones), with the caller's credential state; it opens no connector session.
+- 9ed473c: The outbound fetch error hint names the real proxy variable, `CAPYBARA_NET__HTTPS_PROXY`.
+- 3702282: Pin file-preview rc.5: the file previewer paints no ground of its own before the host's `init`, so
+  it no longer flashes white in the dark theme.
+- 901b2ed: A connector session's `listResources` items may carry `size` (bytes). The kernel's resources
+  listing takes an optional `connectorId` (one session on that connector, refusing one that is not
+  active or has `read_resource` off). With `connectorId` it also hides MCP app UI templates (`ui:`
+  URIs, `text/html;profile=mcp-app`) and resources of size 0.
+- 588cfd2: Prompt suggestions share the prompt cache with the run again: tool definitions read back for a
+  rebuilt request keep the key order they were sent with (`tool_specs.spec_text`, migration 0201;
+  jsonb had reordered the input schemas, so every suggestion re-wrote the whole history), and the
+  suggestion's usage event keeps the provider's per-lifetime cache write split.
+- Updated dependencies [901b2ed]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.91
+
 ## 0.1.0-rc.115
 
 ### Patch Changes

@@ -1,5 +1,26 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.50
+
+### Patch Changes
+
+- acfb3c5: Raise the dual-replica harness PostgreSQL connect timeout to 30 s so replicas do not fail to start on loaded CI runners.
+- Updated dependencies [b41536f]
+- Updated dependencies [7651f27]
+- Updated dependencies [3b6a67c]
+- Updated dependencies [c94a643]
+- Updated dependencies [87a51b6]
+- Updated dependencies [40cf427]
+- Updated dependencies [4ee14be]
+- Updated dependencies [ecfef5f]
+- Updated dependencies [9ed473c]
+- Updated dependencies [3702282]
+- Updated dependencies [901b2ed]
+- Updated dependencies [588cfd2]
+  - @capybara-hq/kernel@0.1.0-rc.116
+  - @capybara-hq/plugin-sdk@0.1.0-rc.91
+  - @capybara-hq/plugin-tools@0.1.0-rc.28
+
 ## 0.1.0-rc.49
 
 ### Patch Changes
