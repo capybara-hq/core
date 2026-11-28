@@ -4678,6 +4678,8 @@
         "browserView": "Opened a live view of a device",
         "browserViewClosed": "Closed a live view of a device",
         "deviceNetworkDenied": "Denied network access",
+        "deviceLoopbackGranted": "Allowed a local port",
+        "deviceLoopbackRevoked": "Closed a local port",
         "devicePolicyChanged": "Changed a device's policy",
         "devicePolicyFailed": "A device policy change failed",
         "devicePolicyRequested": "Requested a device policy change",
