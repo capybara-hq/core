@@ -267,9 +267,12 @@ describe("InvitationsService.accept", () => {
     let hashCalls = 0;
     hashHook.onHash = async () => {
       hashCalls++;
+      // Restrict to client backends so PostgreSQL background workers (such as autovacuum after
+      // beforeEach's truncate/insert) are not counted as open service transactions.
       const r = await sql<{ n: number }>`
         SELECT count(*)::int AS n FROM pg_stat_activity
         WHERE xact_start IS NOT NULL AND datname = current_database()
+          AND backend_type = 'client backend'
           AND pid <> pg_backend_pid()`.execute(watcher);
       openDuringHash.push(r.rows[0]?.n ?? -1);
     };
