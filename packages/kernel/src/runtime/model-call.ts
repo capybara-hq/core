@@ -1640,12 +1640,24 @@ export async function prepareCompaction(
   if (!plan) return { skipped: "no_plan", estimate, window: info.contextWindow };
   // compaction model spec §4.2: the purpose is read only now (the trigger passed, a plan exists),
   // so a step that does not compact pays nothing; the plan above is V's either way
-  const { summarizer } = await chooseSummarizer(
-    deps,
-    input.orgId,
-    { ref: modelRef, provider, info },
-    compaction,
-  );
+  let summarizer: Summarizer;
+  try {
+    ({ summarizer } = await chooseSummarizer(
+      deps,
+      input.orgId,
+      { ref: modelRef, provider, info },
+      compaction,
+    ));
+  } catch (err) {
+    // the purpose could not be read (not "unconfigured": that is V by today's rules): the
+    // compaction ends as an unavailable model does, never on V, and the step continues
+    deps.log.warn("compaction skipped: the compaction model is unavailable", {
+      context: "Compaction",
+      conversationId: input.conversationId,
+      err,
+    });
+    return { skipped: "unavailable", reason: "the compaction model is unavailable" };
+  }
   if (opts.idle === "compaction_model" && summarizer.source !== "compaction_model") {
     return { skipped: "no_compaction_model" };
   }

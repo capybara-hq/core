@@ -3002,7 +3002,7 @@ describe("runModelStep", () => {
           );
         });
 
-        it("a port that throws another error fails the compaction as today: no silent V", async () => {
+        it("a port that throws another error ends the compaction as unavailable: no call on any model, the step goes on", async () => {
           const h = harness({
             compactionModel: {
               target: async () => {
@@ -3012,16 +3012,77 @@ describe("runModelStep", () => {
           });
           await cachedStep(h);
           await nextTurn("echo:second");
-          const before = (await all()).length;
           const sentBefore = h.sent.length;
+          // the automatic path: nothing written for the compaction, the step's own request follows
+          await withSettings(compactNext, async () => {
+            await icStep(h.d, 1);
+          });
+          const sent = h.sent.slice(sentBefore);
+          expect(sent.filter((r) => r.purpose === "compaction")).toEqual([]);
+          expect(sent.map((r) => r.model)).toEqual(["fake-1"]);
+          expect(await ofType("compaction_summary")).toEqual([]);
+          expect(await ofType("compaction_failed")).toEqual([]);
+          expect(h.lines).toContainEqual(
+            expect.objectContaining({
+              level: "warn",
+              msg: "compaction skipped: the compaction model is unavailable",
+            }),
+          );
+          // a manual run records the outcome, naming no model (no call was built)
+          const sentManual = h.sent.length;
           const input = await stepInput();
           const events = await readAllEvents(eventLog, conversationId);
           const tools = stepToolsOf(await resolveAgentTools(h.d, input, events), input, h.d);
-          await expect(
-            runCompaction(h.d, input, events, h.d.config.get().runtime, proactive(), tools),
-          ).rejects.toThrow("purposes read failed");
-          expect(h.sent.slice(sentBefore)).toEqual([]);
-          expect(await all()).toHaveLength(before);
+          const out = await runCompaction(
+            h.d,
+            input,
+            events,
+            h.d.config.get().runtime,
+            proactive(),
+            tools,
+            { force: true, manual: true },
+          );
+          expect(out).toMatchObject({ summarySeq: null, failed: true });
+          expect(h.sent.slice(sentManual)).toEqual([]);
+          expect((await ofType("compaction_failed")).map((f) => f.payload)).toEqual([
+            { attempt: 1, step: 1, reason: "the compaction model is unavailable" },
+          ]);
+        });
+
+        it("Review Focus 4: a large-output C never raises the cap above V's max (request level)", async () => {
+          const c = { provider: "stub", model: "big-out" };
+          const s = stub(
+            [
+              stubInfo("rung", { contextWindow: 24_000, maxOutputTokens: 3000 }),
+              stubInfo("big-out", { contextWindow: 1_000_000, maxOutputTokens: 393_216 }),
+            ],
+            (req) =>
+              req.purpose === "compaction" ? `<summary>${"s".repeat(2000)}</summary>` : "ok",
+          );
+          stubImpl = s;
+          const h = harness({
+            compactionModel: { target: async () => ({ model: c, params: {} }) },
+          });
+          await cachedStep(h);
+          await nextTurn("echo:second");
+          const settings = { ...COMPACTION_SETTINGS.parse({}), maxOutputTokens: 20_000 };
+          const opts = {
+            force: true,
+            ref: { provider: "stub", model: "rung" },
+            transcriptOnly: true,
+          };
+          const { input, events, tools } = await prepare(h.d, settings, opts);
+          const out = await runCompaction(
+            h.d,
+            input,
+            events,
+            h.d.config.get().runtime,
+            settings,
+            tools,
+            opts,
+          );
+          expect(out.failed).toBe(false);
+          expect(s.calls.map((r) => [r.model, r.maxOutputTokens])).toEqual([["big-out", 3000]]);
         });
 
         it("C's call fails: compaction_failed names C, and no request goes to V (Q1)", async () => {

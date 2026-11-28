@@ -60,8 +60,8 @@ export type SummarizerFallback =
 /**
  * §4.2 / §4.3: C when mapped, resolvable and eligible; else V with the reason (logged at `warn` for
  * unavailable, `debug` for small, not at all for unconfigured; `context=Compaction`). Never throws
- * for C's failures; an error of the port other than unconfigured (a failed PG read) propagates, so
- * the compaction fails instead of silently summarizing on V.
+ * for C's resolution or size; an error of the port other than unconfigured (a failed PG read)
+ * propagates, and `prepareCompaction` ends the compaction as unavailable (never on V).
  *
  * The cap is `min(setting, V max)` on V (today's) and `min(setting, C max, V max)` on C: a
  * large-output summarizer never writes a longer summary than V would (§5.1). Eligibility is
