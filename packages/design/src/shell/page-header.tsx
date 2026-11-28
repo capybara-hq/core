@@ -200,8 +200,9 @@ const routeDepth = (href: string) =>
  * The path a head stands at (spec §4.2 path rule, maintainer decision 2026-11-28): a head whose
  * tabs are routes (each tab its own page, `href`) is one place, so every tab's route has the level
  * of the head's first tab. On a tab whose route is deeper than the first tab's, the segments it adds
- * (the tab's own) go: `管理后台 / 连接器 / 模板` stands at `管理后台 / 连接器`, which, two segments,
- * draws no path row, as on the first tab. The compact back walks this path too.
+ * (the tab's own) go: `Admin console / Connectors / Templates` stands at `Admin console /
+ * Connectors`, which, two segments, draws no path row, as on the first tab. The compact back walks
+ * this path too.
  */
 export function headPath(
   path: PageHeaderProps["path"],

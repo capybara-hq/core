@@ -17,7 +17,7 @@ export type PathScope = "org" | "home" | "admin";
 
 /**
  * The route words of each scope's paths (spec §2.4): a path names its places by the sidebar's and
- * the tabs' names (`管理后台 / 连接器 / 模板`), never by URL slugs. Keys are the route words; the
+ * the tabs' names (`Admin console / Connectors / Templates`), never by URL slugs. Keys are the route words; the
  * labels live in the `path` messages.
  */
 export const PATH_WORDS = {
@@ -125,7 +125,7 @@ export function usePagePath(scope: PathScope, ...rest: PathSegment[]): PathSegme
 
 /**
  * A route word of `scope` as a path segment: its translated name (the sidebar's or the tab's), linked
- * to `href` when given. `usePathWord("admin")("connectors", "/admin/connectors")` reads 连接器.
+ * to `href` when given. `usePathWord("admin")("connectors", "/admin/connectors")` reads "Connectors" in en.
  */
 export function usePathWord<S extends PathScope>(
   scope: S,
