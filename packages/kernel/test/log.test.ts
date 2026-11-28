@@ -3,7 +3,7 @@ import { secret } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { secretValues } from "../src/config/fields.js";
-import { createLogger, type KernelLogger } from "../src/log.js";
+import { createLogger } from "../src/log.js";
 
 function capture(level: string) {
   const lines: string[] = [];
@@ -167,35 +167,40 @@ describe("createLogger", () => {
   });
 
   it("redaction cost does not grow with the number of registered secrets (10000 vs 1)", () => {
-    // Compares two loggers in the same process and conditions instead of a wall-clock budget: a
-    // loaded machine slows both alike, while a per-secret scan would make the 10000-secret logger
-    // hundreds of times slower than the one-secret logger. Interleaved rounds, best of each. The
-    // rounds stay short (200 lines) so a loaded CI runner finishes well inside the test timeout.
+    // Counts the matchers' candidate comparisons instead of timing them, so the result is exact on
+    // any machine. All 10000 secrets share a prefix with the logged text (as real tokens share
+    // `sk-proj-` or `ghp_`) and have one length, so a matcher whose work is independent of the
+    // number of secrets makes exactly as many comparisons as with one secret; a per-secret scan of
+    // the prefix bucket makes thousands more per occurrence.
+    const deploy = (i: number) => `deploy-secret-${String(i).padStart(5, "0")}`;
+    const org = (i: number) => `org-tenant-secret-${String(i).padStart(5, "0")}`;
     const fields = Object.fromEntries(
       Array.from({ length: 10 }, (_, i) => [
         `f${i}`,
-        `some ordinary log text value number ${i} deploy-secret-42-332598`,
+        // a deployment secret, an org secret, and same-prefix text that is no secret (a miss)
+        `ordinary text ${i} ${deploy(42)} ${org(7)} deploy-notes org-tenant-notes`,
       ]),
     );
-    const many = createLogger("info", { write: () => {} });
-    many.addSecrets(Array.from({ length: 5_000 }, (_, i) => `deploy-secret-${i}-${i * 7919}`));
-    many.addOrgSecrets(
-      Array.from({ length: 5_000 }, (_, i) => `org-tenant-secret-${i}-${i * 104729}`),
-    );
-    const one = createLogger("info", { write: () => {} });
-    one.addSecrets(["deploy-secret-42-332598"]);
-    const time = (logger: KernelLogger) => {
-      const t0 = performance.now();
-      for (let i = 0; i < 200; i++) logger.info("line", fields);
-      return performance.now() - t0;
+    const comparisons = (addDeploy: string[], addOrg: string[]) => {
+      const probes = { count: 0 };
+      const lines: string[] = [];
+      const logger = createLogger("info", { write: (l) => lines.push(l), matcherProbes: probes });
+      logger.addSecrets(addDeploy);
+      logger.addOrgSecrets(addOrg);
+      logger.info(`msg ${deploy(42)}`, fields);
+      const line = lines[0] as string;
+      expect(line).not.toContain(deploy(42));
+      expect(line).not.toContain(org(7));
+      expect(line).toContain("deploy-notes org-tenant-notes");
+      return probes.count;
     };
-    time(many); // warmup and matcher build
-    time(one);
-    let best = { many: Number.POSITIVE_INFINITY, one: Number.POSITIVE_INFINITY };
-    for (let round = 0; round < 5; round++) {
-      best = { many: Math.min(best.many, time(many)), one: Math.min(best.one, time(one)) };
-    }
-    expect(best.many).toBeLessThan(best.one * 20);
+    const many = comparisons(
+      Array.from({ length: 5_000 }, (_, i) => deploy(i)),
+      Array.from({ length: 5_000 }, (_, i) => org(i)),
+    );
+    const one = comparisons([deploy(42)], [org(7)]);
+    expect(one).toBeGreaterThan(0);
+    expect(many).toBe(one);
   });
 
   it("嵌套的组织配置密钥（secret 对象下的 record / 数组 / 数字）被打码", () => {
