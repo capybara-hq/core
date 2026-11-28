@@ -22,6 +22,8 @@ import {
   ComposerMenu,
   type ComposerMenuGroup,
   type ComposerMenuProps,
+  type ComposerPlace,
+  ComposerPlaceChip,
   ContextSection,
   ConversationPage,
   type ConversationPageProps,
@@ -88,6 +90,7 @@ import {
   PANEL_FIXTURE,
   PERMISSION_FIXTURE,
   PROJECT_FILES_FIXTURE,
+  PROJECT_FIXTURE,
   PROSE_FIXTURE,
   SKILL_FIXTURE,
   SUBAGENT_FIXTURE,
@@ -603,6 +606,44 @@ function composerProps(
   };
 }
 
+/** The top strip's pickers from the fixtures: the device, then its projects; locked on a conversation. */
+function placeProps(locked: boolean): ComposerPlace {
+  const E = DEVICE_FIXTURE;
+  const PR = PROJECT_FIXTURE;
+  const label = (items: readonly { id: string; label: string }[], id: string) =>
+    items.find((i) => i.id === id)?.label ?? id;
+  return {
+    device: {
+      label: K.device,
+      value: label(E.items, E.selected),
+      ...(locked ? { locked: { hint: K.deviceLocked } } : {}),
+      groups: [{ items: E.items.map((i) => ({ ...i, checked: i.id === E.selected })) }],
+      onPick: noop,
+    },
+    project: {
+      label: K.project,
+      value: label(PR.items, PR.selected),
+      ...(locked ? { locked: { hint: K.projectLocked } } : {}),
+      groups: [{ items: PR.items.map((i) => ({ ...i, checked: i.id === PR.selected })) }],
+      onPick: noop,
+    },
+  };
+}
+
+/** The composer with the top strip, the mode button after + and the model · effort at the end. */
+function PlaceComposer({ locked, form }: { locked: boolean; form?: "medium" }) {
+  const base = composerProps("idle");
+  return (
+    <ComposerBox
+      {...base}
+      {...(locked ? {} : { placeholder: K.newPlaceholder.replace("研究助手", C.agent.name) })}
+      place={placeProps(locked)}
+      mode={modeProps("closed")}
+      {...(form ? { referenceForm: form } : {})}
+    />
+  );
+}
+
 function composerBlocks(): ReactNode {
   const states: ComposerState[] = [
     "idle",
@@ -641,6 +682,23 @@ function composerBlocks(): ReactNode {
           referenceTouch
         />
       </Block>
+      {/* the top strip (§6.16.2 "Top strip"): open on a new conversation, locked on one */}
+      <Block id="composer-place">
+        <PlaceComposer locked={false} />
+      </Block>
+      <Block id="composer-place-locked">
+        <PlaceComposer locked />
+      </Block>
+      <RefBlock id="composer-place-medium" width={600} pad>
+        <PlaceComposer locked={false} form="medium" />
+      </RefBlock>
+      {/* a phone-window state: the touch form comes from the size class's own CSS */}
+      <RefBlock id="composer-compact-place" width={390} pad>
+        <PlaceComposer locked={false} />
+      </RefBlock>
+      <RefBlock id="composer-compact-place-sheet" width={390} height={844}>
+        <ComposerPlaceChip {...placeProps(false)} referenceSheet={{}} />
+      </RefBlock>
     </>
   );
 }

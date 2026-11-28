@@ -442,11 +442,14 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       appendEvents(qc, orgId, conversationId, [event]);
       return event;
     },
-    // A switch was logged with the message: the row's selection changed.
-    invalidates: (m) =>
-      m.model !== undefined || m.effort !== undefined
+    // A switch was logged with the message: the row's selection changed. Sent files are in the
+    // person's library now (the `@` menu's recent files).
+    invalidates: (m) => [
+      ...(m.model !== undefined || m.effort !== undefined
         ? [keys.org(orgId).conversation(conversationId).row()]
-        : [],
+        : []),
+      ...(m.files !== undefined && m.files.length > 0 ? [keys.org(orgId).filesAll()] : []),
+    ],
   });
   const send = useCallback(
     async (m: MessageInput): Promise<SendResult> => {

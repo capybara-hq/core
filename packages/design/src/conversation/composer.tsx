@@ -22,8 +22,10 @@ import { BoxScope } from "../layout/box";
 import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
 import { isTouchPointer } from "../shell/pointer";
+import { useMobileSizes } from "../shell/touch";
 import type { ComposerMenuCombobox } from "./composer-menu";
 import { ComposerOptions } from "./composer-options";
+import { type ComposerPlace, ComposerPlaceStrip } from "./composer-place";
 import { ContextMeter } from "./context-meter";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
 import { ModeMenu, type ModeMenuProps, nextMode } from "./mode-menu";
@@ -41,11 +43,17 @@ import { findTokenLikeSpans, removeSpans, type TokenLikeKind } from "./token-lik
 export function ComposerFrame({
   busy,
   bare,
+  place,
+  form,
   children,
 }: {
   /** A send or stop is in flight: `aria-busy` for plugin CSS. */
   busy?: boolean;
   bare?: boolean;
+  /** The frame holds the top strip (§6.16.2): the control row takes its `place` layout. */
+  place?: boolean;
+  /** The reference set and catalog only: draw the medium form in a wide window. */
+  form?: "medium";
   children?: ReactNode;
 }): JSX.Element {
   return (
@@ -54,6 +62,8 @@ export function ComposerFrame({
       data-part="composer"
       data-cap-part="composer"
       data-frame={bare ? "bare" : undefined}
+      data-place={place ? "true" : undefined}
+      data-form={form}
       aria-busy={busy ? true : undefined}
     >
       {children}
@@ -162,7 +172,15 @@ export function Picker({
   onPick,
   referenceOpen,
   searchable,
-}: PickerProps & { searchable?: boolean }): JSX.Element {
+  titled,
+}: PickerProps & {
+  searchable?: boolean;
+  /**
+   * The top strip's pickers (§6.16.2): a locked one's tooltip leads with its whole value, which a
+   * long project name cuts with an ellipsis.
+   */
+  titled?: boolean;
+}): JSX.Element {
   const t = useDesignT();
   const [open, setOpen] = useState(false);
   if (locked?.warning) {
@@ -187,8 +205,13 @@ export function Picker({
   }
   if (locked) {
     return (
-      <span className="cb-picker" data-part="picker" data-locked="true" title={locked.hint}>
-        {value}
+      <span
+        className="cb-picker"
+        data-part="picker"
+        data-locked="true"
+        title={titled ? `${value}: ${locked.hint}` : locked.hint}
+      >
+        <span className="cb-picker-value">{value}</span>
       </span>
     );
   }
@@ -319,6 +342,17 @@ export type ComposerBoxProps = {
     effort?: PickerProps;
   };
   /**
+   * The top strip (§6.16.2 "Top strip"): where the conversation runs, the device then its project
+   * (absent when the device offers none), above the attachments and the text; a `locked` picker is
+   * static text (a conversation's). With it the control row draws no device picker
+   * (`pickers.device` is ignored), the mode button follows + and the model picker stands at the
+   * end before the context meter and send; below 600 the strip is one chip opening a sheet, the
+   * mode an icon button and the settings chip the model's name (model and effort only).
+   */
+  place?: ComposerPlace;
+  /** The reference set and catalog only: draw the medium form (600 to 840) in a wide window. */
+  referenceForm?: "medium";
+  /**
    * The mode menu (§6.16.3a): from 640 up one button at the end of the row (before send) holds the
    * permission profiles and the effort, so the row draws neither `pickers.permission` nor
    * `pickers.effort` and the model picker reads "<model> · <effort>". Shift+Tab in the textarea
@@ -389,6 +423,11 @@ const TOKEN_KINDS: TokenLikeKind[] = [
   "high-entropy",
 ];
 
+/** The mode menu without its effort segments (the effort is chosen elsewhere). */
+function withoutEffort({ effort: _effort, ...rest }: ModeMenuProps): ModeMenuProps {
+  return rest;
+}
+
 /** The composer's chip (§6.16.2, state `skill`). */
 export type ComposerToken = { label: string; hint?: string; onRemove(): void };
 
@@ -455,6 +494,8 @@ export function ComposerBox({
   token,
   suggestion,
   referenceTouch,
+  place,
+  referenceForm,
   frame = true,
 }: ComposerBoxProps): JSX.Element {
   const t = useDesignT();
@@ -464,6 +505,9 @@ export function ComposerBox({
   // render, so the server render and hydration agree.
   const [touch, setTouch] = useState(false);
   useEffect(() => setTouch(isTouchPointer()), []);
+  // the touch form's condition (MOBILE_SIZE_QUERY: compact, or a touch device at any width), as
+  // the CSS draws it; null on the server and before hydration
+  const mobile = useMobileSizes() === true;
   // The token paste warning (setup guides v2 spec §12.1): raised by a paste holding token-like
   // text or by a send whose draft holds some; a guard against a slip, never a block. The draft is
   // scanned here in the browser only: nothing is logged or sent anywhere.
@@ -639,9 +683,35 @@ export function ComposerBox({
       </Callout>
     </BoxScope>
   ) : null;
+  // The settings chip (below 600, and on touch): with the top strip it holds no device, and no
+  // permission while the mode button shows; it then reads the model's name alone.
+  const options = (
+    <ComposerOptions
+      {...(pickers.device && !place ? { device: pickers.device } : {})}
+      {...(pickers.permission && !(place && mode) ? { permission: pickers.permission } : {})}
+      model={pickers.model}
+      {...(pickers.effort ? { effort: pickers.effort } : {})}
+      {...(place ? { nameOnly: true } : {})}
+    />
+  );
+  // The touch form with the top strip: the effort moves into the model's sheet (the settings
+  // chip), so the mode menu holds the profiles alone (§6.16.2 compact).
+  const effortInSheet = place !== undefined && mobile && pickers.effort !== undefined;
+  const shownMode = mode && effortInSheet ? withoutEffort(mode) : mode;
+  const modeButton = shownMode ? (
+    <span className="cb-composer-mode" data-part="composer-mode">
+      <ModeMenu {...shownMode} {...(place ? { named: true } : {})} />
+    </span>
+  ) : null;
   return (
-    <ComposerFrame busy={send.busy === true} bare={!frame}>
+    <ComposerFrame
+      busy={send.busy === true}
+      bare={!frame}
+      place={place !== undefined}
+      {...(referenceForm ? { form: referenceForm } : {})}
+    >
       {menu?.node ?? null}
+      {place ? <ComposerPlaceStrip {...place} /> : null}
       {tokenWarning}
       {attachments}
       <label className="cb-sr-only" htmlFor={id}>
@@ -725,9 +795,24 @@ export function ComposerBox({
       </div>
       <div className="cb-composer-bar" data-part="composer-bar">
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
+        {place ? (
+          // The top strip's layout: the mode follows +; below 600 the mode (an icon button) and
+          // the settings chip (the model and the effort) share the row above the pill (CSS).
+          <span className="cb-composer-settings" data-part="composer-settings">
+            {modeButton}
+            {options}
+          </span>
+        ) : null}
+        {place ? (
+          <>
+            {quickActions ?? null}
+            {agents ?? null}
+            <span className="cb-grow" />
+          </>
+        ) : null}
         {/* 600 and up: individual pickers; phones: one options button and its bottom sheet (CSS). */}
         <span className="cb-composer-pickers" data-part="composer-pickers">
-          {pickers.device ? <Picker {...pickers.device} /> : null}
+          {pickers.device && !place ? <Picker {...pickers.device} /> : null}
           {mode ? (
             // the effort lives in the mode menu: the model picker names it ("<model> · <effort>")
             <Picker
@@ -745,20 +830,15 @@ export function ComposerBox({
             </>
           )}
         </span>
-        <ComposerOptions
-          {...(pickers.device ? { device: pickers.device } : {})}
-          {...(pickers.permission ? { permission: pickers.permission } : {})}
-          model={pickers.model}
-          {...(pickers.effort ? { effort: pickers.effort } : {})}
-        />
-        {quickActions ?? null}
-        {agents ?? null}
-        <span className="cb-grow" />
-        {mode ? (
-          <span className="cb-composer-mode" data-part="composer-mode">
-            <ModeMenu {...mode} />
-          </span>
-        ) : null}
+        {place ? null : (
+          <>
+            {options}
+            {quickActions ?? null}
+            {agents ?? null}
+            <span className="cb-grow" />
+            {modeButton}
+          </>
+        )}
         {suggested && (touch || referenceTouch) ? (
           <Button
             variant="ghost"

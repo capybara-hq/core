@@ -292,6 +292,10 @@ textarea {
   color: var(--cb-faint);
   cursor: default;
 }
+/* spec §6.1: a disabled ghost or icon button never gains a border the enabled one lacks */
+.r-icon-btn:disabled:not([data-variant="default"]) {
+  border-color: transparent;
+}
 /* spec §6.1: a disabled primary keeps a `line` border, the `selected` ground, `disabled` text. */
 .r-btn[data-variant="primary"]:disabled {
   border-color: var(--cb-line);
@@ -338,7 +342,7 @@ textarea {
   border-color: var(--cb-fail);
 }
 .r-input:disabled {
-  border-color: var(--cb-line-soft);
+  border-color: var(--cb-line);
   background: var(--cb-hover);
   color: var(--cb-faint);
 }
@@ -8405,6 +8409,12 @@ span.r-scal-daynum {
   background: var(--cb-hover);
   color: var(--cb-muted);
 }
+/* §6.59: the close's x glyph is touch.sheet-close-icon at stroke 2.2 */
+.r-cmm-sheet-close svg {
+  width: var(--cb-touch-sheet-close-icon);
+  height: var(--cb-touch-sheet-close-icon);
+  stroke-width: 2.2;
+}
 .r-cmm-sheet-body {
   min-height: 0;
   overflow-y: auto;
@@ -8543,7 +8553,7 @@ span.r-scal-daynum {
   width: auto;
 }
 .r-pfp-search[data-disabled] {
-  border-color: var(--cb-line-soft);
+  border-color: var(--cb-line);
   background: var(--cb-hover);
 }
 /* The rows: one height for every folder (nine rows); the scroll pulls out by pad.default.x so the
@@ -8678,4 +8688,164 @@ span.r-scal-daynum {
 }
 .r-pfp-sheet-foot .r-grow {
   display: none;
+}
+
+/* ── Composer top strip (spec §6.16.2 "Top strip") ── */
+/* Device / project above the text, pulled left by space.2 like the control row; the project gives
+   way first. */
+.r-composer-place {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0 0 var(--cb-space-1) calc(-1 * var(--cb-space-2));
+}
+.r-composer-place > .r-picker {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.r-place-sep + .r-picker {
+  flex-shrink: 100;
+}
+.r-place-sep {
+  flex: none;
+  padding: 0 var(--cb-space-1);
+  color: var(--cb-muted);
+}
+/* Compact (touch form): the row above the pill (the place chip, the mode icon button, the settings
+   chip), then the pill with ＋, the text and send. No frame box. */
+.r-cpose {
+  display: flex;
+  flex-direction: column;
+}
+.r-cpose-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  margin-bottom: var(--cb-space-2);
+}
+.r-cpose-row > .r-composer-place {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0 auto 0 0;
+}
+.r-place-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--cb-touch-hit);
+  padding: 0 var(--cb-space-3);
+  border: 1px solid var(--cb-float-line);
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-float-ground);
+  color: var(--cb-muted);
+  font: inherit;
+  white-space: nowrap;
+}
+.r-place-chip > svg {
+  flex: none;
+}
+.r-options-chip {
+  flex: none;
+  max-width: 11em;
+}
+.r-place-value {
+  flex: none;
+  max-width: 8em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.r-place-value[data-project],
+.r-options-chip > .r-place-value {
+  flex: 0 1 auto;
+  max-width: none;
+}
+.r-place-chip .r-place-sep {
+  padding: 0;
+  color: var(--cb-faint);
+}
+.r-touch-icon {
+  flex: none;
+  width: var(--cb-touch-hit);
+  height: var(--cb-touch-hit);
+}
+.r-cpill {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
+  column-gap: var(--cb-space-1);
+  min-height: var(--cb-touch-composer);
+  border: 1px solid var(--cb-float-line);
+  border-radius: calc(var(--cb-touch-composer) / 2);
+  background: var(--cb-float-ground);
+  box-shadow: var(--cb-shadow-float-touch);
+}
+.r-cpill > .r-touch-icon {
+  margin: 0 0 calc((var(--cb-touch-composer) - var(--cb-touch-hit)) / 2 - 1px) calc(var(--cb-space-2) - 1px);
+}
+.r-cpill > .r-composer-input {
+  align-self: center;
+  margin: 0;
+  padding-block: calc(var(--cb-space-3) - 1px);
+}
+.r-cpill > .r-pill-send {
+  width: var(--cb-touch-float);
+  height: var(--cb-touch-float);
+  margin: 0 calc(var(--cb-space-2) - 1px) calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2 - 1px) 0;
+  border-radius: var(--cb-radius-pill);
+}
+/* The place sheet (§6.59): a heading over each group, the options 40 high on the group's ground. */
+.r-place-group + .r-place-group {
+  margin-top: var(--cb-touch-sheet-inset);
+}
+.r-sheet-heading {
+  margin: 0;
+  padding: 0 var(--cb-space-4) var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  font-weight: 500;
+}
+.r-sheet-group {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-hover);
+  overflow: hidden;
+}
+.r-sheet-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  /* the touch form's option rows (§6.7): touch.row */
+  height: var(--cb-touch-row);
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+}
+.r-sheet-option[aria-checked="true"] {
+  background: var(--cb-selected);
+}
+.r-sheet-option[data-disabled] {
+  color: var(--cb-disabled);
+}
+.r-sheet-option > .r-ellipsis {
+  flex: 1;
+}
+.r-sheet-option-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+/* Medium (600 to 840, by window width as in the product): the mode shows its icon and chevron. */
+@media (min-width: 600px) and (max-width: 840px) {
+  .r-composer-place ~ .r-composer-bar .r-mode-label {
+    display: none;
+  }
 }

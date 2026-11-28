@@ -466,7 +466,9 @@ describe("a new conversation in a project", () => {
       screen.queryByRole("option", { name: new RegExp(`^${en.chat.composerMenu.projectFiles}`) }),
     ).toBeNull();
     await user.click(plus());
-    await user.click(screen.getByRole("button", { name: new RegExp(`^${en.chat.pickDevice}: `) }));
+    await user.click(
+      await screen.findByRole("button", { name: new RegExp(`^${en.chat.projectGroup}: `) }),
+    );
     await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
     await user.click(plus());
     await user.click(await projectRow());
@@ -508,7 +510,9 @@ describe("a new conversation in a project: refusals and project changes", () => 
   });
   const pickProject = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
     await user.click(plus());
-    await user.click(screen.getByRole("button", { name: new RegExp(`^${en.chat.pickDevice}: `) }));
+    await user.click(
+      await screen.findByRole("button", { name: new RegExp(`^${en.chat.projectGroup}: `) }),
+    );
     await user.click(await screen.findByRole("menuitemradio", { name }));
   };
 
