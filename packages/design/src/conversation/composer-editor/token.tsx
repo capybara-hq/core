@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { type JSX, useId } from "react";
 import { MarkImage } from "../../display/object-mark";
 import { Icon } from "../../icons/icon";
 import { useDesignT } from "../../provider";
@@ -10,7 +10,7 @@ export function skillText(label: string): string {
   return label.startsWith("/") ? label : `/${label}`;
 }
 
-/** The token's accessible name (spec §1): 「连接器：Slack」, refused 「连接器：Slack，不可用」. */
+/** The token's accessible name (spec §1): "<kind>: <label>", refused adds ", unavailable". */
 export function useTokenName(): (token: ComposerTokenData) => string {
   const t = useDesignT();
   return (token) => {
@@ -24,8 +24,8 @@ export function useTokenName(): (token: ComposerTokenData) => string {
 
 /** The lead before the label: the connector's mark, the file type, the kind's icon; none for a skill. */
 function Lead({ token }: { token: ComposerTokenData }): JSX.Element | null {
-  if (token.state === "refused") return <Icon name="circle-alert" size={14} />;
-  if (token.icon?.name) return <Icon name={token.icon.name} size={14} />;
+  if (token.state === "refused") return <Icon name="circle-alert" size={16} />;
+  if (token.icon?.name) return <Icon name={token.icon.name} size={16} />;
   switch (token.kind) {
     case "connector":
     case "resource":
@@ -45,9 +45,9 @@ function Lead({ token }: { token: ComposerTokenData }): JSX.Element | null {
         </span>
       );
     case "projectFile":
-      return <Icon name="file-code" size={14} />;
+      return <Icon name="file-code" size={16} />;
     case "conversation":
-      return <Icon name="chats" size={14} />;
+      return <Icon name="chats" size={16} />;
     default:
       return null;
   }
@@ -55,7 +55,7 @@ function Lead({ token }: { token: ComposerTokenData }): JSX.Element | null {
 
 /**
  * One inline token (composer inline tokens spec §1): an atomic box in the text flow with its lead
- * and label, the full label as its tooltip, `role="img"` named 「<kind>：<label>」. Presentational:
+ * and label, the full label as its tooltip, `role="img"` named "<kind>: <label>". Presentational:
  * the composer's `TokenNode` and the bubble draw it. `selected` draws the accent outline;
  * `hidden` draws an invisible copy that only takes the token's room (the hint's ghost line).
  */
@@ -70,6 +70,8 @@ export function InlineToken({
 }): JSX.Element {
   const name = useTokenName()(token);
   const label = token.kind === "skill" ? skillText(token.label) : token.label;
+  const reasonId = useId();
+  const reason = !hidden && token.state === "refused" && token.reason ? token.reason : undefined;
   return (
     <span
       className="cb-inline-token"
@@ -84,15 +86,20 @@ export function InlineToken({
             role: "img",
             "aria-label": name,
             title: label,
-            ...(token.state === "refused" && token.reason
-              ? { "aria-description": token.reason }
-              : {}),
+            ...(reason ? { "aria-describedby": reasonId } : {}),
           })}
     >
       <Lead token={token} />
       <span className="cb-inline-token-label" data-part="inline-token-label">
-        {label}
+        {/* a path gives way at its start (the tooltip keeps it whole): the label runs right to
+            left around a left-to-right run, so the ellipsis lands before the file name */}
+        {token.kind === "projectFile" ? <span dir="ltr">{label}</span> : label}
       </span>
+      {reason ? (
+        <span id={reasonId} className="cb-sr-only">
+          {reason}
+        </span>
+      ) : null}
     </span>
   );
 }

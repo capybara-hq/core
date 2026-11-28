@@ -73,18 +73,30 @@ export function normalizeSegments(s: readonly ComposerSegment[]): ComposerSegmen
   return out;
 }
 
-/** Two drafts hold the same text and the same tokens in the same order. */
-export function sameSegments(a: readonly ComposerSegment[], b: readonly ComposerSegment[]) {
-  return JSON.stringify(a) === JSON.stringify(b);
+/**
+ * A draft's identity: its text and each token's `(kind, id)`. A label fetched later or a refusal
+ * mark changes the token's data, not the draft.
+ */
+export function canonicalSegments(s: readonly ComposerSegment[]): (string | [string, string])[] {
+  return normalizeSegments(s).map((x) => (typeof x === "string" ? x : [x.kind, x.id]));
 }
 
+/** Two drafts hold the same text and the same tokens (by kind and id) in the same order. */
+export function sameSegments(a: readonly ComposerSegment[], b: readonly ComposerSegment[]) {
+  return JSON.stringify(canonicalSegments(a)) === JSON.stringify(canonicalSegments(b));
+}
+
+/** Matches U+FFFC and every format character (`Cf`) except ZWNJ and ZWJ. */
+const STRIPPED = /(?![\u200C\u200D])[\uFFFC\p{Cf}]/gu;
+
 /**
- * Pasted text as the composer takes it (spec §2 "Paste"): U+FFFC and every format character
- * (`Cf`: zero-width spaces and joiners, bidi marks, BOM) removed, line breaks kept, so a paste
- * never carries a stray token marker into the message.
+ * Pasted or dropped text as the composer takes it (spec §2 "Paste"): U+FFFC and the format
+ * characters (`Cf`: zero-width spaces, bidi marks, BOM) removed, line breaks kept, so the text
+ * never carries a stray token marker into the message. ZWNJ (U+200C) and ZWJ (U+200D) stay: they
+ * shape scripts and join emoji sequences.
  */
 export function stripPastedText(text: string): string {
-  return text.replace(/[￼\p{Cf}]/gu, "").replace(/\r\n?/g, "\n");
+  return text.replace(STRIPPED, "").replace(/\r\n?/g, "\n");
 }
 
 /** The editor's content as segments (inside a read or update). */

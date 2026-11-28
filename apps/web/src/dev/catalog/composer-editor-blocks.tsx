@@ -9,7 +9,7 @@ import {
 import { COMPOSER_EDITOR_FIXTURE } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Block } from "./conversation-blocks";
-import { RefBlock } from "./ref-block";
+import { RefBlock, RefPending } from "./ref-block";
 
 // The composer editor's blocks (composer inline tokens spec §1, §2, §6): the Lexical editor alone
 // in the composer frame, one block per state. Each block is live: the interaction spec
@@ -34,12 +34,26 @@ function EditorBlock({
   const [trigger, setTrigger] = useState<ComposerTrigger | null>(null);
   const [submits, setSubmits] = useState(0);
   const probe = useRef<HTMLSpanElement | null>(null);
+  // `selected`: the token is clicked once Lexical has drawn it; the block stays pending until then,
+  // so the specs (and the screenshots) never see it unselected
+  const [selecting, setSelecting] = useState(selectToken === true);
   useEffect(() => {
     if (!selectToken) return;
-    const token = probe.current?.parentElement?.querySelector<HTMLElement>(
-      '[data-part="inline-token"]',
-    );
-    token?.click();
+    let frame = 0;
+    const tick = () => {
+      const token = probe.current?.parentElement?.querySelector<HTMLElement>(
+        '[data-part="inline-token"]',
+      );
+      if (!token) {
+        frame = requestAnimationFrame(tick);
+        return;
+      }
+      token.click();
+      if (token.getAttribute("data-selected") === "true") setSelecting(false);
+      else frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
   }, [selectToken]);
   return (
     <ComposerFrame>
@@ -59,6 +73,7 @@ function EditorBlock({
         data-trigger={JSON.stringify(trigger)}
         data-submits={submits}
       />
+      {selecting ? <RefPending /> : null}
     </ComposerFrame>
   );
 }

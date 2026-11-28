@@ -6,13 +6,16 @@ import {
   $isNodeSelection,
   $isRangeSelection,
   $setSelection,
+  BEFORE_INPUT_COMMAND,
   CLICK_COMMAND,
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   COMPOSITION_END_TAG,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
   CUT_COMMAND,
   CUT_TAG,
+  DRAGSTART_COMMAND,
   HISTORIC_TAG,
   HISTORY_PUSH_TAG,
   KEY_ARROW_LEFT_COMMAND,
@@ -25,6 +28,8 @@ import {
   mergeRegister,
   PASTE_COMMAND,
   PASTE_TAG,
+  type RangeSelection,
+  TextNode,
 } from "lexical";
 import { isTouchPointer } from "../../shell/pointer";
 import { $plainWithCaret, stripPastedText, TOKEN_MARKER } from "./segments";
@@ -69,14 +74,15 @@ const isSpace = (c: string | undefined) => c !== undefined && c !== TOKEN_MARKER
 
 /**
  * Registers the composer's commands on `editor`; `props()` returns the latest callbacks. Returns
- * the cleanup.
+ * the cleanup and `dismissTrigger` (the page closed its menu).
  */
 export function registerComposerCommands(
   editor: LexicalEditor,
   props: () => ComposerCommandProps,
-): () => void {
+): { dispose(): void; dismissTrigger(): void } {
   // ── The trigger (spec §2 "IME", composer menus spec §1) ──
-  let armed: { trigger: "@" | "/"; at: number } | null = null;
+  // `end`: where the query ended at the last report; a caret moved outside [at + 1, end] closes it
+  let armed: { trigger: "@" | "/"; at: number; end: number } | null = null;
   let reported = "null";
   let prevLength = editor.getEditorState().read(() => $plainWithCaret(null).text.length);
   let composed = false;
@@ -90,9 +96,13 @@ export function registerComposerCommands(
   const onUpdate = ({
     editorState,
     tags,
+    dirtyElements,
+    dirtyLeaves,
   }: {
     editorState: ReturnType<LexicalEditor["getEditorState"]>;
     tags: Set<string>;
+    dirtyElements: Map<string, boolean>;
+    dirtyLeaves: Set<string>;
   }) => {
     // During a composition no trigger opens and the query does not change: the committed text is
     // read once it ends.
@@ -109,7 +119,13 @@ export function registerComposerCommands(
       // a selection over the query is plain editing: the menu stays as it is
       if (caret === null) return;
       const query = text.slice(armed.at + 1, caret);
+      // a caret moved (a click, an arrow) out of the query leaves the trigger behind
+      const moved =
+        dirtyElements.size === 0 &&
+        dirtyLeaves.size === 0 &&
+        (caret < armed.at + 1 || caret > armed.end);
       const gone =
+        moved ||
         text[armed.at] !== armed.trigger ||
         caret <= armed.at ||
         query.includes("\n") ||
@@ -119,6 +135,7 @@ export function registerComposerCommands(
         // `@ `: an address or plain text, not a pick
         (armed.trigger === "@" && /^\s/.test(query));
       if (!gone) {
+        armed.end = caret;
         report({ trigger: armed.trigger, query, atStart: armed.at === 0 });
         return;
       }
@@ -132,9 +149,9 @@ export function registerComposerCommands(
       (grew || afterComposition);
     if (typed && caret !== null && caret > 0) {
       const c = text[caret - 1];
-      // only the ASCII characters: a full-width ＠ an IME commits is text
+      // only the ASCII characters: a full-width at sign (U+FF20) an IME commits is text
       if ((c === "@" || c === "/") && (caret === 1 || isSpace(text[caret - 2]))) {
-        armed = { trigger: c, at: caret - 1 };
+        armed = { trigger: c, at: caret - 1, end: caret };
         report({ trigger: c, query: "", atStart: caret === 1 });
         return;
       }
@@ -142,9 +159,21 @@ export function registerComposerCommands(
     report(null);
   };
 
-  return mergeRegister(
+  /** The page closed the menu (Esc): the trigger stays closed until a new one is typed. */
+  const dismissTrigger = () => {
+    armed = null;
+    report(null);
+  };
+
+  const dispose = mergeRegister(
     editor.registerUpdateListener(onUpdate),
+    // Defence in depth: no text node ever holds a token marker, whatever put it there.
+    editor.registerNodeTransform(TextNode, (node) => {
+      const t = node.getTextContent();
+      if (t.includes(TOKEN_MARKER)) node.setTextContent(t.split(TOKEN_MARKER).join(""));
+    }),
     // The menu's keys come before the editor's own; a `true` stops them (its ↵ picks, never sends).
+    // A printable key over a selected token replaces it.
     editor.registerCommand(
       KEY_DOWN_COMMAND,
       (event) => {
@@ -153,9 +182,42 @@ export function registerComposerCommands(
           event.preventDefault();
           return true;
         }
+        const printable =
+          event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
+        if (printable && $isNodeSelection($getSelection())) {
+          const range = $replaceSelectedTokens();
+          if (range === null) return false;
+          event.preventDefault();
+          $addUpdateTag(HISTORY_PUSH_TAG);
+          range.insertText(event.key);
+          return true;
+        }
         return false;
       },
       COMMAND_PRIORITY_CRITICAL,
+    ),
+    // Text a soft keyboard inserts (or deletes) over a selected token replaces (or removes) it.
+    editor.registerCommand(
+      BEFORE_INPUT_COMMAND,
+      (event) => {
+        if (editor.isComposing() || !$isNodeSelection($getSelection())) return false;
+        if (event.inputType === "insertText" && event.data) {
+          const range = $replaceSelectedTokens();
+          if (range === null) return false;
+          event.preventDefault();
+          $addUpdateTag(HISTORY_PUSH_TAG);
+          range.insertText(event.data);
+          return true;
+        }
+        if (event.inputType.startsWith("delete")) {
+          event.preventDefault();
+          $addUpdateTag(HISTORY_PUSH_TAG);
+          $replaceSelectedTokens();
+          return true;
+        }
+        return false;
+      },
+      COMMAND_PRIORITY_HIGH,
     ),
     // ↵ sends; Shift+↵ is a line break, and so is ↵ on a touch device (send is the button there).
     editor.registerCommand(
@@ -176,6 +238,7 @@ export function registerComposerCommands(
     editor.registerCommand(
       PASTE_COMMAND,
       (event) => {
+        if (editor.isComposing()) return false;
         const e = event as unknown as Clipboardish & Event;
         const data = e.clipboardData ?? e.dataTransfer ?? null;
         if (data === null) return false;
@@ -186,11 +249,51 @@ export function registerComposerCommands(
         if (raw === "") return true;
         props().onPasteText?.(raw);
         const text = stripPastedText(raw);
-        const selection = $getSelection();
-        if (text === "" || !$isRangeSelection(selection)) return true;
+        if (text === "") return true;
+        const selection = $isNodeSelection($getSelection())
+          ? $replaceSelectedTokens()
+          : $getSelection();
+        if (!$isRangeSelection(selection)) return true;
         $addUpdateTag(PASTE_TAG);
         $addUpdateTag(HISTORY_PUSH_TAG);
         selection.insertRawText(text);
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    ),
+    // Text from a drop (or a replacement or yank) arrives cleaned as a paste does, at the point
+    // Lexical put the selection; typed text over a selected token replaces it.
+    editor.registerCommand(
+      CONTROLLED_TEXT_INSERTION_COMMAND,
+      (payload) => {
+        if (editor.isComposing()) return false;
+        const transfer = typeof payload === "string" ? null : payload.dataTransfer;
+        const selected = $isNodeSelection($getSelection());
+        if (transfer == null && !selected) return false;
+        const range = selected ? $replaceSelectedTokens() : $getSelection();
+        if (!$isRangeSelection(range)) return false;
+        $addUpdateTag(HISTORY_PUSH_TAG);
+        if (transfer != null) {
+          $addUpdateTag(PASTE_TAG);
+          const text = stripPastedText(
+            transfer.getData("text/plain") || transfer.getData("text/uri-list"),
+          );
+          if (text !== "") range.insertRawText(text);
+        } else {
+          const text = typeof payload === "string" ? payload : (payload.data ?? "");
+          if (text !== "") range.insertText(text);
+        }
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    ),
+    // A selection holding a token is never dragged within the editor (a drop would bring back its
+    // plain form as text, not the token).
+    editor.registerCommand(
+      DRAGSTART_COMMAND,
+      (event) => {
+        if (!$selectionHasToken()) return false;
+        event.preventDefault();
         return true;
       },
       COMMAND_PRIORITY_HIGH,
@@ -200,7 +303,7 @@ export function registerComposerCommands(
       COPY_COMMAND,
       (event) => {
         const selection = $getSelection();
-        if (selection === null) return false;
+        if (editor.isComposing() || !$hasSelectedContent(selection)) return false;
         writePlain(event, selection.getTextContent());
         return true;
       },
@@ -210,7 +313,7 @@ export function registerComposerCommands(
       CUT_COMMAND,
       (event) => {
         const selection = $getSelection();
-        if (selection === null) return false;
+        if (editor.isComposing() || !$hasSelectedContent(selection)) return false;
         writePlain(event, selection.getTextContent());
         $addUpdateTag(CUT_TAG);
         $addUpdateTag(HISTORY_PUSH_TAG);
@@ -224,6 +327,7 @@ export function registerComposerCommands(
     editor.registerCommand(
       CLICK_COMMAND,
       (event) => {
+        if (editor.isComposing()) return false;
         const target = event.target instanceof Element ? event.target : null;
         const host = target?.closest("[data-lexical-decorator]");
         if (!host) return false;
@@ -240,25 +344,57 @@ export function registerComposerCommands(
     // A selected token (a click or a tap) goes with Backspace or Delete; ← / → leave it.
     editor.registerCommand(
       KEY_BACKSPACE_COMMAND,
-      (event) => deleteSelectedToken(event),
+      (event) => !editor.isComposing() && deleteSelectedToken(event),
       COMMAND_PRIORITY_HIGH,
     ),
     editor.registerCommand(
       KEY_DELETE_COMMAND,
-      (event) => deleteSelectedToken(event),
+      (event) => !editor.isComposing() && deleteSelectedToken(event),
       COMMAND_PRIORITY_HIGH,
     ),
     editor.registerCommand(
       KEY_ARROW_LEFT_COMMAND,
-      (event) => leaveSelectedToken(event, true),
+      (event) => !editor.isComposing() && leaveSelectedToken(event, true),
       COMMAND_PRIORITY_HIGH,
     ),
     editor.registerCommand(
       KEY_ARROW_RIGHT_COMMAND,
-      (event) => leaveSelectedToken(event, false),
+      (event) => !editor.isComposing() && leaveSelectedToken(event, false),
       COMMAND_PRIORITY_HIGH,
     ),
   );
+  return { dispose, dismissTrigger };
+}
+
+/** A selection with something in it: a range that is not a caret, or selected tokens. */
+function $hasSelectedContent(
+  selection: ReturnType<typeof $getSelection>,
+): selection is NonNullable<ReturnType<typeof $getSelection>> {
+  if ($isRangeSelection(selection)) return !selection.isCollapsed();
+  return $isNodeSelection(selection) && selection.getNodes().length > 0;
+}
+
+/** Whether the selection holds a token (selected as a node, or inside a range). */
+function $selectionHasToken(): boolean {
+  const selection = $getSelection();
+  if ($isNodeSelection(selection)) return selection.getNodes().some($isTokenNode);
+  return (
+    $isRangeSelection(selection) &&
+    !selection.isCollapsed() &&
+    selection.getNodes().some($isTokenNode)
+  );
+}
+
+/**
+ * Removes the selected tokens and returns the caret where they stood, so what is typed, pasted
+ * or picked next takes their place; null when no token is selected.
+ */
+export function $replaceSelectedTokens(): RangeSelection | null {
+  const selection = $getSelection();
+  if (!$isNodeSelection(selection)) return null;
+  removeSelectedTokens(selection);
+  const next = $getSelection();
+  return $isRangeSelection(next) ? next : null;
 }
 
 /** Removes the selected tokens, the caret where the first one stood. */

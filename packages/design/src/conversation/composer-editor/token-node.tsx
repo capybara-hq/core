@@ -65,6 +65,13 @@ export class TokenNode extends DecoratorNode<JSX.Element> {
     return this.getLatest().__token;
   }
 
+  /** Redraws the token with new data (a label fetched later, a refusal mark). */
+  setToken(token: ComposerTokenData): this {
+    const writable = this.getWritable();
+    writable.__token = clean(token);
+    return writable;
+  }
+
   override createDOM(): HTMLElement {
     const span = document.createElement("span");
     span.className = "cb-inline-token-host";

@@ -64,7 +64,7 @@ test("arrow keys step over a token", async ({ page }) => {
   await open(page);
   const b = block(page, "selected");
   const editor = editorOf(b);
-  // 「给 |[Slack] 发消息」
+  // the caret after the first text, right before the Slack token
   await caretAt(editor, 0, 2);
   await expect.poll(() => beforeCaret(editor)).toBe("给 ");
   await page.keyboard.press("ArrowRight");
@@ -123,7 +123,7 @@ test("Backspace after a token removes it", async ({ page }) => {
   await open(page);
   const b = block(page, "refused");
   const editor = editorOf(b);
-  // 「给 [Lark]| 发消息」: the caret at the start of the text after the token
+  // the caret at the start of the text after the Lark token
   await caretAt(editor, 1, 0);
   await page.keyboard.press("Backspace");
   await expect(tokens(b)).toHaveCount(0);
@@ -134,7 +134,7 @@ test("word delete removes the previous token", async ({ page }) => {
   await open(page);
   const b = block(page, "skill");
   const editor = editorOf(b);
-  // 「[/fix-issue]| 」: the caret right after the token
+  // the caret right after the skill token
   await caretAt(editor, 0, 0);
   await page.keyboard.press(isMac ? "Alt+Backspace" : "Control+Backspace");
   await expect(tokens(b)).toHaveCount(0);

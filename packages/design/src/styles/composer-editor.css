@@ -69,6 +69,11 @@
   flex: none;
   color: var(--cb-muted);
 }
+/* A project file's path is cut at its start, so the file name stays (spec §1). */
+.cb-inline-token[data-kind="projectFile"] > .cb-inline-token-label {
+  direction: rtl;
+  text-align: left;
+}
 /* A connector's mark: its plugin icon contained, else its initial. */
 .cb-inline-token-mark {
   display: inline-flex;
@@ -143,7 +148,8 @@
   .cb-inline-token {
     max-width: 10em;
   }
-  .cb-inline-token-mark {
+  .cb-inline-token-mark,
+  .cb-inline-token > .cb-icon {
     width: 14px;
     height: 14px;
   }
@@ -152,7 +158,8 @@
   --cb-inline-token-inset: 1px;
   max-width: 10em;
 }
-.cb-composer-editor[data-form="compact"] .cb-inline-token-mark {
+.cb-composer-editor[data-form="compact"] .cb-inline-token-mark,
+.cb-composer-editor[data-form="compact"] .cb-inline-token > .cb-icon {
   width: 14px;
   height: 14px;
 }

@@ -5,6 +5,7 @@ import {
   $getSelection,
   $isRangeSelection,
   $setSelection,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
   type ElementNode,
   type LexicalEditor,
   UNDO_COMMAND,
@@ -67,7 +68,7 @@ function mount(props: Parameters<typeof Harness>[0] = {}, locale: "zh" | "en" = 
       <Harness handle={handle} {...props} />
     </DesignProvider>,
   );
-  const box = screen.getByRole("textbox");
+  const box = utils.container.querySelector<HTMLElement>("[contenteditable]") as HTMLElement;
   const editor = (box as HTMLElement & { __lexicalEditor: LexicalEditor }).__lexicalEditor;
   // the editor has the focus, so its selection reaches the DOM (key events read it from there)
   act(() => {
@@ -85,6 +86,22 @@ function type(editor: LexicalEditor, text: string) {
         const s = $getSelection();
         if ($isRangeSelection(s)) s.insertText(text);
         else $getRoot().selectEnd().insertText(text);
+      },
+      { discrete: true },
+    );
+  });
+}
+
+/** Selects the first token as a click does. */
+function selectFirstToken(editor: LexicalEditor) {
+  act(() => {
+    editor.update(
+      () => {
+        const p = $getRoot().getFirstChildOrThrow() as ElementNode;
+        const node = p.getChildren().find($isTokenNode);
+        const s = $createNodeSelection();
+        if (node) s.add(node.getKey());
+        $setSelection(s);
       },
       { discrete: true },
     );
@@ -299,12 +316,19 @@ describe("ComposerEditor (composer inline tokens spec §2)", () => {
     });
     expect(screen.getByRole("img", { name: "连接器：Slack" })).toBeTruthy();
     const refused = screen.getByRole("img", { name: "连接器：Lark，不可用" });
-    expect(refused.getAttribute("aria-description")).toBe("已停用");
+    expect(refused.getAttribute("aria-describedby")).toBeTruthy();
+    expect(screen.getByRole("img", { description: "已停用" })).toBe(refused);
   });
 
   it("names tokens in English too", () => {
     mount({ initial: [{ kind: "projectFile", id: "p", label: "src/app.ts" }] }, "en");
     expect(screen.getByRole("img", { name: "Project file: src/app.ts" })).toBeTruthy();
+  });
+
+  it("is a multiline text box without a menu", () => {
+    const { box } = mount();
+    expect(box.getAttribute("role")).toBe("textbox");
+    expect(box.getAttribute("aria-multiline")).toBe("true");
   });
 
   it("combobox attributes pass through", () => {
@@ -319,7 +343,7 @@ describe("ComposerEditor (composer inline tokens spec §2)", () => {
         },
       },
     });
-    expect(box.getAttribute("role")).toBe("textbox");
+    expect(box.getAttribute("role")).toBe("combobox");
     expect(box.getAttribute("aria-multiline")).toBe("true");
     expect(box.getAttribute("aria-expanded")).toBe("true");
     expect(box.getAttribute("aria-controls")).toBe("menu-list");
@@ -447,5 +471,253 @@ describe("ComposerEditor (composer inline tokens spec §2)", () => {
     });
     expect(screen.getByRole("img", { name: "连接器：Slack" })).toBeTruthy();
     expect(screen.getByRole("textbox").textContent).toContain("restored");
+  });
+  it("format characters go but ZWJ and ZWNJ stay", async () => {
+    const { box, h } = mount();
+    await act(async () => {
+      fireEvent.paste(box, {
+        clipboardData: clipboard({ "text/plain": "👨\u200D👩\u200D👧 a\u200Bb\u200Cc\u202Ed" }),
+      });
+    });
+    expect(h().value()).toEqual(["👨\u200D👩\u200D👧 ab\u200Ccd"]);
+  });
+
+  it("drop strips U+FFFC and format characters", () => {
+    const onTrigger = vi.fn();
+    const { editor, h } = mount({ over: { onTrigger } });
+    // a native drop reaches the editor as beforeinput insertFromDrop, which Lexical turns into
+    // this command at the drop point (jsdom has no beforeinput)
+    act(() => {
+      editor.update(
+        () => {
+          editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, {
+            inputType: "insertFromDrop",
+            data: null,
+            dataTransfer: clipboard({ "text/plain": "@x\uFFFCy\u200B" }),
+          } as unknown as InputEvent);
+        },
+        { discrete: true },
+      );
+    });
+    expect(h().value()).toEqual(["@xy"]);
+    expect(onTrigger.mock.calls.every(([t]) => t === null)).toBe(true);
+  });
+
+  it("a drag of a selection holding a token is refused", async () => {
+    const { box, editor } = mount({ initial: ["给 ", slack, " 发消息"] });
+    act(() => {
+      editor.update(
+        () => {
+          const p = $getRoot().getFirstChildOrThrow() as ElementNode;
+          p.select(0, 3);
+        },
+        { discrete: true },
+      );
+    });
+    let prevented = false;
+    await act(async () => {
+      prevented = !fireEvent.dragStart(box, { dataTransfer: clipboard() });
+    });
+    expect(prevented).toBe(true);
+  });
+
+  it("no text node keeps a token marker", () => {
+    const { editor, h } = mount();
+    type(editor, "a\uFFFCb");
+    expect(h().value()).toEqual(["ab"]);
+  });
+
+  it("copy and cut with a bare caret leave the clipboard alone", async () => {
+    const { box, h } = mount({ initial: ["给 ", slack] });
+    act(() => h().replace(["给 ", slack]));
+    const data = clipboard({ "text/plain": "before" });
+    await act(async () => {
+      fireEvent.copy(box, { clipboardData: data });
+      fireEvent.cut(box, { clipboardData: data });
+    });
+    expect(data.store).toEqual({ "text/plain": "before" });
+    expect(h().value()).toEqual(["给 ", slack]);
+  });
+
+  it("cut writes plain forms and removes the selection", async () => {
+    const { box, editor, h } = mount({ initial: ["给 ", slack, " 发消息"] });
+    act(() => {
+      editor.update(
+        () => {
+          const p = $getRoot().getFirstChildOrThrow() as ElementNode;
+          p.select(0, 2);
+        },
+        { discrete: true },
+      );
+    });
+    const data = clipboard();
+    await act(async () => {
+      fireEvent.cut(box, { clipboardData: data });
+    });
+    expect(data.store).toEqual({ "text/plain": "给 @Slack" });
+    expect(h().value()).toEqual([" 发消息"]);
+  });
+
+  it("typing over a selected token replaces it", async () => {
+    const { box, editor, h } = mount({ initial: ["a ", slack, " b"] });
+    selectFirstToken(editor);
+    await act(async () => {
+      fireEvent.keyDown(box, { key: "x" });
+    });
+    expect(h().value()).toEqual(["a x b"]);
+  });
+
+  it("a paste over a selected token replaces it", async () => {
+    const { box, editor, h } = mount({ initial: ["a ", slack, " b"] });
+    selectFirstToken(editor);
+    await act(async () => {
+      fireEvent.paste(box, { clipboardData: clipboard({ "text/plain": "pasted" }) });
+    });
+    expect(h().value()).toEqual(["a pasted b"]);
+  });
+
+  it("a pick over a selected token replaces it", () => {
+    const lark: ComposerTokenData = { kind: "connector", id: "c-lark", label: "Lark" };
+    const { editor, h } = mount({ initial: ["a ", slack, " b"] });
+    selectFirstToken(editor);
+    act(() => h().insertToken(lark));
+    expect(h().value()).toEqual(["a ", lark, " b"]);
+  });
+
+  it("a trigger opens after a line break, not right after a token", () => {
+    const onTrigger = vi.fn();
+    const { editor, h } = mount({ over: { onTrigger } });
+    type(editor, "a");
+    type(editor, "\n");
+    type(editor, "@");
+    expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "", atStart: false });
+    act(() => h().replace(["x ", slack]));
+    onTrigger.mockClear();
+    type(editor, "@");
+    expect(onTrigger.mock.calls.every(([t]) => t === null)).toBe(true);
+  });
+
+  it("a caret moved out of the query closes the trigger", () => {
+    const onTrigger = vi.fn();
+    const { editor } = mount({ over: { onTrigger } });
+    type(editor, "hi ");
+    type(editor, "@");
+    type(editor, "sl");
+    expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "sl", atStart: false });
+    act(() => {
+      editor.update(
+        () => {
+          const p = $getRoot().getFirstChildOrThrow() as ElementNode;
+          p.getFirstDescendant()?.selectStart?.();
+          const t = p.getFirstChild();
+          if (t && "select" in t)
+            (t as unknown as { select(a: number, b: number): void }).select(1, 1);
+        },
+        { discrete: true },
+      );
+    });
+    expect(onTrigger).toHaveBeenLastCalledWith(null);
+    // back at the end of the query, it stays closed: only a new trigger opens a menu
+    act(() => {
+      editor.update(() => $getRoot().selectEnd(), { discrete: true });
+    });
+    expect(onTrigger).toHaveBeenLastCalledWith(null);
+  });
+
+  it("dismissTrigger closes the trigger until a new one is typed", () => {
+    const onTrigger = vi.fn();
+    const { editor, h } = mount({ over: { onTrigger } });
+    type(editor, "@");
+    type(editor, "sl");
+    act(() => h().dismissTrigger());
+    expect(onTrigger).toHaveBeenLastCalledWith(null);
+    type(editor, "a");
+    expect(onTrigger).toHaveBeenLastCalledWith(null);
+    type(editor, " ");
+    type(editor, "@");
+    expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "", atStart: false });
+  });
+
+  it("an IME composition holds the trigger until it ends", async () => {
+    const onTrigger = vi.fn();
+    const onSubmit = vi.fn();
+    const { box, editor } = mount({ over: { onTrigger, onSubmit } });
+    type(editor, "ask ");
+    await act(async () => {
+      fireEvent.compositionStart(box, { data: "" });
+    });
+    expect(editor.isComposing()).toBe(true);
+    // the IME's text, the caret after it (as the browser's selection would put it)
+    act(() => {
+      editor.update(
+        () => {
+          const s = $getSelection();
+          if ($isRangeSelection(s)) s.insertText("@");
+          $getRoot().selectEnd();
+        },
+        { discrete: true },
+      );
+    });
+    expect(onTrigger.mock.calls.every(([t]) => t === null)).toBe(true);
+    await act(async () => {
+      fireEvent.keyDown(box, { key: "Enter", keyCode: 229, isComposing: true });
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.compositionEnd(box, { data: "@" });
+    });
+    expect(editor.isComposing()).toBe(false);
+    expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "", atStart: false });
+  });
+
+  it("an echo and a label refresh call no onChange and keep the caret", async () => {
+    const seen = vi.fn();
+    let setPage: (s: ComposerSegment[]) => void = noop;
+    function Page() {
+      const [segments, setSegments] = useState<ComposerSegment[]>(["a ", slack, " b"]);
+      setPage = setSegments;
+      return (
+        <DesignProvider locale="zh">
+          <ComposerEditor
+            segments={segments}
+            onChange={(s) => {
+              seen(s);
+              setSegments(s);
+            }}
+            placeholder="Message"
+            onSubmit={noop}
+          />
+        </DesignProvider>
+      );
+    }
+    const { container } = render(<Page />);
+    const box = container.querySelector("[contenteditable]") as HTMLElement & {
+      __lexicalEditor: LexicalEditor;
+    };
+    const editor = box.__lexicalEditor;
+    act(() => {
+      box.focus();
+      editor.update(() => $getRoot().selectEnd(), { discrete: true });
+    });
+    type(editor, "c");
+    expect(seen).toHaveBeenCalledTimes(1);
+    const caret = () =>
+      editor.read(() => {
+        const s = $getSelection();
+        return $isRangeSelection(s) ? `${s.anchor.key}:${s.anchor.offset}` : null;
+      });
+    const before = caret();
+    await act(async () => {
+      setPage(["a ", { ...slack, label: "Slack 工作区" }, " bc"]);
+    });
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("img", { name: "连接器：Slack 工作区" })).toBeTruthy();
+    expect(caret()).toBe(before);
+    // the refresh is no undo step: undo takes back the typed "c"
+    await act(async () => {
+      editor.dispatchCommand(UNDO_COMMAND, undefined);
+    });
+    expect(seen).toHaveBeenCalledTimes(2);
+    expect(seen).toHaveBeenLastCalledWith(["a ", expect.objectContaining({ id: "c-slack" }), " b"]);
   });
 });

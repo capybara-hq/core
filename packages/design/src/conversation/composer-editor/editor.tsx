@@ -9,9 +9,12 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $isElementNode,
+  $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
   CLEAR_HISTORY_COMMAND,
+  HISTORY_MERGE_TAG,
   HISTORY_PUSH_TAG,
   type LexicalEditor,
   SKIP_DOM_SELECTION_TAG,
@@ -30,6 +33,7 @@ import {
 import { useDesignT } from "../../provider";
 import type { ComposerMenuCombobox } from "../composer-menu";
 import {
+  $replaceSelectedTokens,
   type ComposerCommandProps,
   type ComposerTrigger,
   PROGRAMMATIC_TAG,
@@ -44,7 +48,7 @@ import {
   sameSegments,
 } from "./segments";
 import { InlineToken } from "./token";
-import { $createTokenNode, TokenNode } from "./token-node";
+import { $createTokenNode, $isTokenNode, TokenNode } from "./token-node";
 
 // The composer's text box on Lexical (composer inline tokens spec §2): plain text with inline
 // tokens, one paragraph with line breaks. The Lexical editor stays inside this module; the page
@@ -63,6 +67,11 @@ export type ComposerEditorHandle = {
   replace(segments: ComposerSegment[]): void;
   /** Empties the draft and its undo history (after a send). */
   clear(): void;
+  /**
+   * The page closed its menu (Esc): the open trigger closes and is not reported again until a
+   * new trigger character is typed.
+   */
+  dismissTrigger(): void;
 };
 
 export type ComposerEditorProps = {
@@ -122,29 +131,57 @@ function Bridge({
   const latest = useRef(props);
   latest.current = props;
   const emitted = useRef<ComposerSegment[]>(normalizeSegments(props.segments));
+  const dismiss = useRef<() => void>(() => {});
 
   useEffect(() => {
     const commandProps = (): ComposerCommandProps => latest.current;
-    const offCommands = registerComposerCommands(editor, commandProps);
+    const commands = registerComposerCommands(editor, commandProps);
+    dismiss.current = commands.dismissTrigger;
     const offChange = editor.registerUpdateListener(({ editorState }) => {
       const next = editorState.read($readSegments);
-      if (sameSegments(next, emitted.current)) return;
+      if (JSON.stringify(next) === JSON.stringify(emitted.current)) return;
+      const changed = !sameSegments(next, emitted.current);
       emitted.current = next;
       setShown(next);
-      latest.current.onChange(next);
+      // only text or tokens moving make a new draft; redrawn token data is the page's own
+      if (changed) latest.current.onChange(next);
     });
     return () => {
-      offCommands();
+      commands.dispose();
       offChange();
     };
   }, [editor, setShown]);
 
   // A draft the page sets (a restore, a quick action) replaces the editor's content; a page that
-  // only echoes what the editor reported changes nothing.
+  // only echoes what the editor reported changes nothing, and one that only redraws tokens (a
+  // label fetched later, a refusal mark) patches them in place: no caret move, no undo step.
   const incoming = JSON.stringify(normalizeSegments(props.segments));
   useEffect(() => {
     const next = JSON.parse(incoming) as ComposerSegment[];
-    if (sameSegments(next, emitted.current)) return;
+    if (JSON.stringify(next) === JSON.stringify(emitted.current)) return;
+    if (sameSegments(next, emitted.current)) {
+      emitted.current = next;
+      setShown(next);
+      const data = next.filter((x): x is ComposerTokenData => typeof x !== "string");
+      editor.update(
+        () => {
+          $addUpdateTag(PROGRAMMATIC_TAG);
+          $addUpdateTag(HISTORY_MERGE_TAG);
+          $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+          let i = 0;
+          for (const block of $getRoot().getChildren()) {
+            if (!$isElementNode(block)) continue;
+            for (const node of block.getChildren()) {
+              if (!$isTokenNode(node)) continue;
+              const token = data[i++];
+              if (token) node.setToken(token);
+            }
+          }
+        },
+        { discrete: true },
+      );
+      return;
+    }
     emitted.current = next;
     setShown(next);
     editor.update(
@@ -173,7 +210,10 @@ function Bridge({
         editor.update(
           () => {
             $programmatic(editor);
-            let selection = $getSelection();
+            // a selected token gives its place to the pick
+            let selection = $isNodeSelection($getSelection())
+              ? $replaceSelectedTokens()
+              : $getSelection();
             if (!$isRangeSelection(selection)) {
               $getRoot().selectEnd();
               selection = $getSelection();
@@ -223,6 +263,7 @@ function Bridge({
         );
         editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
       },
+      dismissTrigger: () => dismiss.current(),
     }),
     [editor],
   );
@@ -233,8 +274,8 @@ function Bridge({
  * The composer's editor (composer inline tokens spec §2): plain text with inline tokens (§1),
  * one line when empty growing to 8 lines, then scrolling. ↵ sends (a line break with Shift, and
  * on a touch device), paste and copy are plain text, a token is deleted, selected and undone as
- * one unit, and nothing reacts during an IME composition. `role="textbox"` with the combobox's
- * attributes while the page hosts a menu.
+ * one unit, and nothing reacts during an IME composition. `role="textbox"`, or `combobox` (still
+ * multiline) with the menu's attributes while the page hosts a menu.
  */
 export const ComposerEditor: ForwardRefExoticComponent<
   ComposerEditorProps & RefAttributes<ComposerEditorHandle>
@@ -271,7 +312,8 @@ export const ComposerEditor: ForwardRefExoticComponent<
             <ContentEditable
               className="cb-composer-input"
               data-part="composer-input"
-              role="textbox"
+              // the combobox of §6.16.2 while the page hosts a menu, a text box otherwise
+              role={props.combobox ? "combobox" : "textbox"}
               ariaMultiline
               ariaLabel={t("composer.message")}
               autoCapitalize="sentences"
