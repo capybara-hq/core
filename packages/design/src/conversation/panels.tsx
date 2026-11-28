@@ -10,11 +10,13 @@ import {
 } from "react";
 import { Button, IconButton } from "../controls/button";
 import { Badge } from "../display/basic";
+import { EmptyState } from "../display/empty-state";
 import { useSkeletonAnnounces } from "../display/skeleton";
 import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { BoxScope, useInBox } from "../layout/box";
+import { useRendersNothing } from "../layout/renders-nothing";
 import { useDesignLink, useDesignT } from "../provider";
 import { DragFill } from "../shell/drag-fill";
 import { useRegisterShellPage } from "../shell/shell-page";
@@ -188,6 +190,12 @@ export type PropertySectionProps = {
   state?: BlockState;
   failure?: { reason?: string };
   onRetry?(): void;
+  /**
+   * Draw the section only while its body renders something (a ready section whose body is a
+   * component that returns `null` leaves no titled frame). Checked after every commit, before
+   * paint; the section appears as soon as the body draws a node.
+   */
+  hideWhenEmpty?: boolean;
   children?: ReactNode;
 };
 
@@ -200,8 +208,16 @@ export function PropertySection({
   state = "ready",
   failure,
   onRetry,
+  hideWhenEmpty,
   children,
 }: PropertySectionProps): JSX.Element {
+  const sectionRef = useRef<HTMLElement>(null);
+  const headRef = useRef<HTMLHeadingElement>(null);
+  const empty = useRendersNothing(
+    sectionRef,
+    hideWhenEmpty === true && state === "ready",
+    (node) => node === headRef.current,
+  );
   let body: ReactNode = children;
   if (state === "loading") body = <SkeletonBars widths={[64, 48]} />;
   if (state === "failed")
@@ -216,13 +232,16 @@ export function PropertySection({
   const inBox = useInBox() !== null;
   return (
     <section
+      ref={sectionRef}
       className="cb-property-section"
       data-part="property-section"
       data-cap-part="section"
       data-state={state}
       data-inset={inBox ? "box" : undefined}
+      data-empty={empty ? "true" : undefined}
+      hidden={empty || undefined}
     >
-      <h3 className="cb-property-head">
+      <h3 ref={headRef} className="cb-property-head">
         <span className="cb-property-title-line">
           <span className="cb-property-title" data-part="property-title">
             {title}
@@ -502,6 +521,12 @@ export type RightPanelProps = {
   body?: "pad" | "flush" | "subagent";
   /** A footer under the body (the sub-agent's status bar). */
   footer?: ReactNode;
+  /**
+   * The empty state's line while a ready body renders nothing (an extension component that
+   * returns `null`): the panel draws it in the body instead of a blank pane, and drops it as soon
+   * as the body draws a node.
+   */
+  emptyText?: string;
   /** Accessible name of the panel (default: the title). */
   label?: string;
   /** The reference set only: the switcher drawn open in place. */
@@ -524,11 +549,19 @@ export function RightPanel({
   onRetry,
   body = "pad",
   footer,
+  emptyText,
   label,
   referenceSwitcherOpen,
   children,
 }: RightPanelProps): JSX.Element {
   const t = useDesignT();
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const emptyRef = useRef<HTMLDivElement>(null);
+  const empty = useRendersNothing(
+    bodyRef,
+    emptyText !== undefined && state === "ready",
+    (node) => node === emptyRef.current,
+  );
   const full = useRightFull();
   const pushed = useRightPushed();
   // Pushed on a phone the panel draws no back of its own: with a step to go back to (`onBack`) it
@@ -630,12 +663,19 @@ export function RightPanel({
           )}
         </header>
         <div
+          ref={bodyRef}
           className="cb-rpanel-body"
           data-part="panel-body"
           data-pad={state === "ready" ? body : "pad"}
           data-state={state}
+          data-empty={empty ? "true" : undefined}
           aria-busy={state === "loading" ? true : undefined}
         >
+          {empty ? (
+            <div ref={emptyRef} data-part="panel-empty">
+              <EmptyState size="panel" text={emptyText ?? ""} />
+            </div>
+          ) : null}
           {content}
         </div>
         {footer ? <div className="cb-rpanel-footer">{footer}</div> : null}

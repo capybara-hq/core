@@ -1348,6 +1348,10 @@ span.cb-title-btn {
  * Inside a box (the narrow properties sheet, spec §6.16.17) a section is a heading and hairline
  * group on the sheet's ground: no ground, radius or hairline of its own, line-soft between groups.
  */
+/* `hideWhenEmpty`: a section whose body renders nothing is not drawn (no gap, no hairline). */
+.cb-property-section[data-empty="true"] {
+  display: none;
+}
 .cb-property-section[data-inset="box"] {
   padding: var(--cb-space-3) 0;
   border-radius: 0;
@@ -2092,7 +2096,8 @@ button.cb-property-row {
   }
 }
 
-.cb-rpanel-body[data-pad][data-state="failed"] {
+.cb-rpanel-body[data-pad][data-state="failed"],
+.cb-rpanel-body[data-pad][data-empty="true"] {
   align-items: center;
   justify-content: center;
 }
