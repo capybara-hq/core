@@ -1921,6 +1921,8 @@ button.cb-file-card:focus-visible {
 .cb-attachment-strip {
   display: flex;
   flex-wrap: wrap;
+  /* a file card beside a thumbnail keeps its own height, centred on the thumbnail's */
+  align-items: center;
   gap: var(--cb-space-2);
   margin-bottom: var(--cb-space-2);
 }

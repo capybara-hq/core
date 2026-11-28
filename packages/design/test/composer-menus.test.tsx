@@ -1,6 +1,16 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { type ReactElement, type KeyboardEvent as ReactKeyboardEvent, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { messages } from "../src/i18n";
 import {
   ComposerBox,
   ComposerMenu,
@@ -941,5 +951,240 @@ describe("ComposerMenu (compact) focus and Esc", () => {
     });
     await waitFor(() => expect(sheet()).toBeNull());
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Drill-in, connector rows and the one-skill line (inline tokens spec §4) ──
+
+function connectorGroups(
+  picks: Picks = {},
+  drills: Record<string, ReturnType<typeof vi.fn>> = {},
+): ComposerMenuGroup[] {
+  const drill = (id: string, label: string) => {
+    drills[id] ??= vi.fn();
+    return { label, onDrill: drills[id] as () => void };
+  };
+  const pick = (id: string) => {
+    picks[id] ??= vi.fn();
+    return picks[id] as () => void;
+  };
+  return [
+    {
+      id: "connectors",
+      label: "连接器",
+      items: [
+        {
+          id: "slack",
+          label: "Slack",
+          mark: { text: "Slack" },
+          description: "团队消息",
+          drill: drill("slack", "查看 Slack 的资源"),
+          onSelect: pick("slack"),
+        },
+        {
+          id: "jira",
+          label: "Jira",
+          mark: { text: "Jira" },
+          description: "项目和工单",
+          badge: "待配置",
+          disabled: true,
+          onSelect: pick("jira"),
+        },
+      ],
+    },
+  ];
+}
+
+function LevelHarness({
+  onBack,
+  initial = "@",
+  withLevel = true,
+  drills,
+}: {
+  onBack: () => void;
+  initial?: string;
+  withLevel?: boolean;
+  drills?: Record<string, ReturnType<typeof vi.fn>>;
+}) {
+  const [text, setText] = useState(initial);
+  const props: ComposerMenuProps = {
+    kind: "at",
+    groups: connectorGroups({}, drills),
+    query: text.slice(1),
+    filter: false,
+    empty: "没有匹配",
+    onClose: () => {},
+    ...(withLevel ? { level: { title: "Slack · 资源", onBack } } : {}),
+  };
+  const menu = useComposerMenu(props);
+  return (
+    <ComposerBox
+      value={text}
+      onChange={setText}
+      placeholder="输入消息"
+      onAttach={() => {}}
+      pickers={{ model: { label: "切换模型", value: "m", groups: [], onPick: () => {} } }}
+      send={{ mode: "send", onClick: () => {} }}
+      menu={{
+        node: <ComposerMenu {...props} controller={menu} />,
+        combobox: menu.combobox,
+        onKeyDown: menu.onKeyDown,
+      }}
+    />
+  );
+}
+
+describe("ComposerMenu drill-in", () => {
+  it("drill button opens the second level", () => {
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    const picks: Picks = {};
+    function H() {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups(picks, drills),
+        query: "",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+      };
+      const menu = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={menu} referenceAnchored />;
+    }
+    wrap(<H />);
+    const rows = screen.getAllByRole("option");
+    // the connector row: name, description line, a drill button named for the connector
+    expect(rows[0]?.textContent).toContain("团队消息");
+    fireEvent.click(
+      within(rows[0] as HTMLElement).getByRole("button", { name: "查看 Slack 的资源" }),
+    );
+    expect(drills.slack).toHaveBeenCalledTimes(1);
+    // the button is not a pick
+    expect(picks.slack).not.toHaveBeenCalled();
+    // a connector waiting for setup: the badge, disabled, no drill
+    expect(rows[1]?.getAttribute("aria-disabled")).toBe("true");
+    expect(rows[1]?.querySelector('[data-part="composer-menu-badge"]')?.textContent).toBe("待配置");
+    expect(rows[1]?.querySelector('[data-part="composer-menu-drill"]')).toBeNull();
+    // the footer hints the key
+    expect(document.querySelector('[data-part="composer-menu-foot"]')?.textContent).toContain(
+      "→ 资源",
+    );
+  });
+
+  it("ArrowRight on a drillable row drills", () => {
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    wrap(<LevelHarness onBack={() => {}} withLevel={false} drills={drills} />);
+    // the caret mid-text: → moves it, it does not drill
+    textarea().setSelectionRange(0, 0);
+    key("ArrowRight");
+    expect(drills.slack).not.toHaveBeenCalled();
+    // the caret at the end (where typing the query leaves it): → drills
+    textarea().setSelectionRange(1, 1);
+    const ev = createEvent.keyDown(textarea(), { key: "ArrowRight" });
+    fireEvent(textarea(), ev);
+    expect(drills.slack).toHaveBeenCalledTimes(1);
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("shows the head with a back button at a level, and none for a flat menu", () => {
+    const onBack = vi.fn();
+    wrap(<LevelHarness onBack={onBack} />);
+    const head = document.querySelector('[data-part="composer-menu-level"]') as HTMLElement;
+    expect(head.textContent).toContain("Slack · 资源");
+    fireEvent.click(within(head).getByRole("button", { name: "返回" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    // the level's own footer carries no → hint
+    expect(document.querySelector('[data-part="composer-menu-drill-hint"]')).toBeNull();
+    cleanup();
+    wrap(<LevelHarness onBack={onBack} withLevel={false} />);
+    expect(document.querySelector('[data-part="composer-menu-level"]')).toBeNull();
+  });
+
+  it("ArrowLeft and Backspace on empty query go back", () => {
+    const onBack = vi.fn();
+    wrap(<LevelHarness onBack={onBack} />);
+    const left = createEvent.keyDown(textarea(), { key: "ArrowLeft" });
+    fireEvent(textarea(), left);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(left.defaultPrevented).toBe(true);
+    const back = createEvent.keyDown(textarea(), { key: "Backspace" });
+    fireEvent(textarea(), back);
+    expect(onBack).toHaveBeenCalledTimes(2);
+    // handled: the composer does not delete the "@"
+    expect(back.defaultPrevented).toBe(true);
+  });
+
+  it("Backspace with a query does not go back", () => {
+    const onBack = vi.fn();
+    wrap(<LevelHarness onBack={onBack} initial="@sl" />);
+    const ev = createEvent.keyDown(textarea(), { key: "Backspace" });
+    fireEvent(textarea(), ev);
+    expect(onBack).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("compact renders the drill-in in the sheet", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const onBack = vi.fn();
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    function Compact({ level }: { level: boolean }) {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups({}, drills),
+        query: "",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+        onQueryChange: () => {},
+        ...(level ? { level: { title: "Slack · 资源", onBack } } : {}),
+      };
+      const menu = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={menu} />;
+    }
+    wrap(<Compact level={false} />);
+    const sheet = screen.getByRole("dialog");
+    // the drill button is a button of the row's trailing end
+    fireEvent.click(within(sheet).getByRole("button", { name: "查看 Slack 的资源" }));
+    expect(drills.slack).toHaveBeenCalledTimes(1);
+    cleanup();
+    wrap(<Compact level />);
+    const level = screen.getByRole("dialog");
+    const head = level.querySelector('[data-part="composer-menu-level"]') as HTMLElement;
+    expect(head.textContent).toContain("Slack · 资源");
+    // the head sits over the search field, in the sheet
+    expect(
+      head.compareDocumentPosition(within(level).getByRole("searchbox")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(within(head).getByRole("button", { name: "返回" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    // Backspace on the empty search field goes back too
+    fireEvent.keyDown(within(level).getByRole("searchbox"), { key: "Backspace" });
+    expect(onBack).toHaveBeenCalledTimes(2);
+  });
+
+  it("disabled skill rows show the one-skill line", () => {
+    const groups: ComposerMenuGroup[] = [
+      {
+        id: "skills",
+        label: "技能",
+        items: [
+          {
+            id: "fix-issue",
+            label: "fix-issue",
+            icon: "skills",
+            description: messages.zh["composerMenu.oneSkill"],
+            disabled: true,
+            onSelect: () => {},
+          },
+        ],
+      },
+    ];
+    wrap(<Harness groups={groups} />);
+    const row = options()[0] as HTMLElement;
+    expect(row.getAttribute("aria-disabled")).toBe("true");
+    expect(row.querySelector('[data-part="composer-menu-desc"]')?.textContent).toBe(
+      "一条消息只能使用一个技能",
+    );
+    expect(messages.en["composerMenu.oneSkill"]).toBe("One skill per message");
   });
 });
