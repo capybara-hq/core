@@ -48,7 +48,7 @@ import { useMemberGuides } from "../../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { SetupGuideSection } from "../../../../components/SetupGuideSection";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { displayNameOf } from "../../../../lib/catalog";
 import {
@@ -138,6 +138,7 @@ function Connector({
   initialTab: Tab;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -175,7 +176,7 @@ function Connector({
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "connectors", href: "/connectors" }],
+          path: [...scope, pw("connectors", "/connectors")],
           title: "",
           // the template's plugin mark keeps its place
           loading: { title: true, avatar: true },
@@ -208,7 +209,7 @@ function Connector({
   return (
     <DetailPage
       header={{
-        path: [...scope, { label: "connectors", href: "/connectors" }, { label: app.name }],
+        path: [...scope, pw("connectors", "/connectors"), { label: app.name }],
         // its template's plugin icon (the name's initial without one)
         avatar: <ObjectMark size={40} text={app.name} image={app.icon ?? null} />,
         title: app.name,

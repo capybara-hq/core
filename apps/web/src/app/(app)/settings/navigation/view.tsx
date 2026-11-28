@@ -16,7 +16,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { pageSections } from "../../../../components/shell/nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import {
   NAV_PRIMARY_MAX,
   type NavigationSetting,
@@ -52,6 +52,7 @@ type Section = "primary" | "more";
 
 function NavigationSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("navSettings");
   const tc = useTranslations("common");
   const toast = useToast();
@@ -74,11 +75,7 @@ function NavigationSettings({ orgId }: { orgId: string }) {
       })),
   });
   const header = {
-    path: [
-      ...scope,
-      { label: "settings", href: "/settings/organization" },
-      { label: "navigation" },
-    ],
+    path: [...scope, pw("settings", "/settings/organization"), pw("navigation")],
     title: t("title"),
     description: t("description"),
   };

@@ -188,6 +188,7 @@
   "tools/oauth/authorization-params.test.ts",
   "tools/platform-tool.test.ts",
   "tools/redact.test.ts",
+  "tools/resource-filter.unit.test.ts",
   "tools/registry-builtin-unavailable.test.ts",
   "tools/result-images.test.ts",
   "tools/sandbox/device-code.test.ts",

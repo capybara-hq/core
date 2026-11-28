@@ -18,7 +18,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { startLink } from "../../../../lib/auth-sources";
 import { navigateBrowser } from "../../../../lib/browser";
 import { labelLocale } from "../../../../lib/extension-label";
@@ -68,6 +68,7 @@ function Identities({
   error: LinkErrorCode | null;
 }) {
   const scope = usePagePath("home");
+  const pw = usePathWord("home");
   const t = useTranslations("identities");
   const tc = useTranslations("common");
   const locale = labelLocale(useLocale());
@@ -193,7 +194,7 @@ function Identities({
   return (
     <SettingsPage
       header={{
-        path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "identities" }],
+        path: [...scope, pw("account", ACCOUNT_HOME), pw("identities")],
         title: t("title"),
         actions: (read.kind === "ready" ? read.data.linkable : []).map((m) => ({
           label: t("link", { platform: m.label[locale] }),

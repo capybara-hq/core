@@ -31,7 +31,7 @@ import {
 } from "../../../../components/ExtensionTabs";
 import { NoAccess } from "../../../../components/NoAccess";
 import { PermissionSummary } from "../../../../components/PermissionSummary";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import {
   type AdminExtension,
   displaySource,
@@ -92,6 +92,7 @@ function AdminExtensionsRead({
   orgId: string | null;
 }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("admin.extensions");
   const te = useTranslations("extensions");
   const read = usePageQuery(adminExtensionsQuery());
@@ -100,7 +101,7 @@ function AdminExtensionsRead({
   const all = read.kind === "ready" ? read.data.extensions : null;
   const counts = all === null ? null : tabCounts(all, (p) => p.permissions);
   const header = {
-    path: [...scope, { label: "extensions" }],
+    path: [...scope, pw("extensions")],
     title: t("title"),
     description: t("description"),
     tabs: useExtensionTabItems(counts, setTab),

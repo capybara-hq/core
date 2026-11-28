@@ -14,7 +14,7 @@ import {
 } from "../../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { componentDescription, type PlatformComponent } from "../../../../../lib/components";
 import { retryOnMountOf } from "../../../../../lib/query/client";
 import { adminComponentsQuery, componentVersionsQuery } from "../../../../../lib/query/components";
@@ -42,6 +42,7 @@ export default function AdminSkillView({ id }: { id: string }) {
 
 function AdminSkillRead({ id, orgId }: { id: string; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents.detail");
   const list = usePageQuery(adminComponentsQuery("skill"));
   if (list.kind === "notFound") return <NotFound />;
@@ -50,7 +51,7 @@ function AdminSkillRead({ id, orgId }: { id: string; orgId: string | null }) {
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "skills", href: "/admin/skills" }, { label: id }],
+          path: [...scope, pw("skills", "/admin/skills"), { label: id }],
           title: "",
         }}
         tabs={{
@@ -71,6 +72,7 @@ function AdminSkillRead({ id, orgId }: { id: string; orgId: string | null }) {
 
 function AdminSkill({ c, orgId }: { c: PlatformComponent; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents.detail");
   const description = componentDescription(c, useLocale());
   const [tab, setTab] = useState<Tab>("versions");
@@ -81,7 +83,7 @@ function AdminSkill({ c, orgId }: { c: PlatformComponent; orgId: string | null }
     <>
       <DetailPage
         header={{
-          path: [...scope, { label: "skills", href: "/admin/skills" }, { label: c.name }],
+          path: [...scope, pw("skills", "/admin/skills"), { label: c.name }],
           title: c.name,
           count: versionLabel(c.version),
           status: <StateBadges c={c} />,

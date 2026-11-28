@@ -271,8 +271,14 @@
 .cb-amap-dot[data-status="limit"] {
   background: var(--cb-warn);
 }
+/* One colour rule for every agent dot (maintainer decision 2026-11-28): finished is faint,
+ * filled when completed and a 1.5px faint ring when stopped. */
 .cb-amap-dot[data-status="completed"] {
-  background: var(--cb-ok);
+  background: var(--cb-faint);
+}
+.cb-amap-dot[data-status="aborted"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--cb-faint);
 }
 .cb-amap-dot[data-status="failed"] {
   background: var(--cb-fail);

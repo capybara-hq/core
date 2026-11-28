@@ -250,3 +250,94 @@ describe("the toast queue's timers", () => {
     expect(screen.queryByText("Second")).toBeNull();
   });
 });
+
+describe("the toast region inside a native shell from 600", () => {
+  const WIDE = "(min-width: 600px)";
+  it("starts space.4 below the band or the window's top row, whichever is lower", () => {
+    const d = decls(WIDE, ":root[data-shell] .cb-toast-region");
+    // the band (`--cb-shell-band`) or the controls' row (`--cb-shell-row`: the rail form's start
+    // band, the caption buttons' end band, the full sidebar's brand row), then the usual space.4
+    expect(flat(d?.top)).toBe(
+      "calc(max(var(--cb-shell-band), var(--cb-shell-row)) + var(--cb-space-4))",
+    );
+    // keyed on the shell's properties alone, never the platform; only the top moves
+    expect(Object.keys(d ?? {})).toEqual(["top"]);
+  });
+
+  it("leaves the browser and compact as they were", () => {
+    const shellRules = rules.filter(
+      (r) => r.selector.includes("[data-shell") && r.selector.includes(".cb-toast-region"),
+    );
+    for (const r of shellRules) {
+      if (r.at === COMPACT) expect(r.decls.top).toBeUndefined();
+      else expect(r.at).toBe(WIDE);
+    }
+  });
+});
+
+function Repeat() {
+  const toast = useToast();
+  return (
+    <>
+      <button type="button" onClick={() => toast.success("Changed")}>
+        ok
+      </button>
+      <button
+        type="button"
+        onClick={() => toast.success("Removed", { actionLabel: "Undo", onAction() {} })}
+      >
+        undo
+      </button>
+      <button
+        type="button"
+        onClick={() => toast.error("Broken", { actionLabel: "View", onAction() {} })}
+      >
+        fail
+      </button>
+    </>
+  );
+}
+const repeatApp = () =>
+  render(
+    <DesignProvider locale="en">
+      <ToastProvider>
+        <Repeat />
+      </ToastProvider>
+    </DesignProvider>,
+  );
+
+describe("a repeated toast folds into the one there", () => {
+  it("shows one success and starts its timer over", () => {
+    vi.useFakeTimers();
+    window.matchMedia = matchMediaFor(1280).matchMedia;
+    repeatApp();
+    fireEvent.click(screen.getByText("ok"));
+    act(() => vi.advanceTimersByTime(3000));
+    fireEvent.click(screen.getByText("ok"));
+    expect(screen.getAllByText("Changed")).toHaveLength(1);
+    // 4 s after the repeat, not after the first
+    act(() => vi.advanceTimersByTime(3999));
+    expect(screen.queryByText("Changed")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByText("Changed")).toBeNull();
+  });
+
+  it("keeps one error with the same action, but stacks successes that carry an Undo", () => {
+    window.matchMedia = matchMediaFor(1280).matchMedia;
+    repeatApp();
+    fireEvent.click(screen.getByText("fail"));
+    fireEvent.click(screen.getByText("fail"));
+    expect(screen.getAllByText("Broken")).toHaveLength(1);
+    fireEvent.click(screen.getByText("undo"));
+    fireEvent.click(screen.getByText("undo"));
+    expect(screen.getAllByText("Removed")).toHaveLength(2);
+  });
+
+  it("folds on compact too, so the queue never shows the same toast twice", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    repeatApp();
+    fireEvent.click(screen.getByText("ok"));
+    fireEvent.click(screen.getByText("ok"));
+    expect(screen.getAllByText("Changed")).toHaveLength(1);
+  });
+});

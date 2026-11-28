@@ -17,7 +17,7 @@ import { NoAccess } from "../../../components/NoAccess";
 import { OrgPluginUploadDialog } from "../../../components/OrgPluginUploadDialog";
 import { cardActions, usePluginActions, usePluginState } from "../../../components/PluginSwitch";
 import { useComponentsLabel } from "../../../components/PluginsHead";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { issueLines } from "../../../lib/api";
 import {
   descriptionOf,
@@ -62,6 +62,7 @@ export default function PluginsView({ staging }: { staging: string | null }) {
 
 function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: string | null }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("plugins");
   const tc = useTranslations("catalog");
   const locale = useLocale();
@@ -116,7 +117,7 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
   const active = showMarket && tab === "market" ? "market" : "plugins";
 
   const header = {
-    path: [...scope, { label: "plugins" }],
+    path: [...scope, pw("plugins")],
     title: t("title"),
     description: t("description"),
     // 上传插件包 (org admins, spec §14): a .tgz plugin package, or a skill .zip

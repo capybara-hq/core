@@ -311,7 +311,7 @@ function agentMapThread(): ReactNode {
 function agentMapBlocks(): ReactNode {
   return (
     <>
-      <RefBlock id="agent-map-tree" width={1129} height={440} pad>
+      <RefBlock id="agent-map-tree" width={1129} height={492} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <AgentMapTree
             root={AM.root}

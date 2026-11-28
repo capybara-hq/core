@@ -1,6 +1,5 @@
 import type { JSX } from "react";
 import { Button } from "../controls/button";
-import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { StatusDot } from "./agent-status";
 import { fillCopy } from "./tool-copy";
@@ -10,7 +9,7 @@ export type AgentsChipProps = {
   count: number;
   /** How many of them run (queued included): the dot is the `accent` pulse while any does. */
   running: number;
-  /** How many wait for a person: the dot is `warn` while any does and none runs. */
+  /** How many wait for a person: the dot is `warn` while any does and none runs (else `faint`). */
   waiting?: number;
   /** Opens the agent map at its root level. */
   onOpen(): void;
@@ -32,12 +31,11 @@ function withNumber(text: string, n: number, part: string): JSX.Element {
 
 /**
  * The agent map's entry in the composer's control row (§6.16.29, acceptance item AC3), as Claude
- * Code's "0 agents": a ghost chip like the pickers, "N 个智能体" / "N agents", the number in `ink`
- * at weight 500 and the words `muted`. It always leads with a mark: the agent map's status dot
- * while a sub-agent runs (`accent`, pulsing) or waits for a person (`warn`), else the `agent`
- * icon. While some are active a short activity part follows (zh "· 1 running", else "· 2 waiting", as the locale words it;
- * the dot carries the color, the text stays `muted` / `ink`). Its accessible name and tooltip add
- * the running count ("3 agents, 1 running" in the locale's words). Below 600 it shrinks to the mark and the count.
+ * Code's "● 3 agents": a ghost chip like the pickers, the label "N agents" alone, the number in
+ * `ink` at weight 500 and the words `muted`. A dot leads it and carries the state: the agent map's
+ * running dot (`accent`, pulsing) while a sub-agent runs, `warn` while one waits for a person and
+ * none runs, else `faint` (all settled). Its accessible name and tooltip add the counts ("3 agents,
+ * 1 running" in the locale's words). Below 600 it shrinks to the dot and the count.
  */
 export function AgentsChip({
   count,
@@ -69,26 +67,12 @@ export function AgentsChip({
       {status !== undefined ? (
         <StatusDot status={status} />
       ) : (
-        <span className="cb-agents-chip-icon" data-part="agents-chip-icon" aria-hidden="true">
-          <Icon name="agent" size={14} />
-        </span>
+        // settled: the plain `faint` dot (the name says it)
+        <span className="cb-amap-dot" data-part="agent-dot" aria-hidden="true" />
       )}
       <span className="cb-agents-chip-label" data-part="agents-chip-label">
         {withNumber(labelCopy, count, "agents-chip-number")}
       </span>
-      {status !== undefined ? (
-        // the name already says it; the dot before the label carries the color
-        <span
-          className="cb-agents-chip-activity"
-          data-part="agents-chip-activity"
-          aria-hidden="true"
-        >
-          {"· "}
-          {status === "running"
-            ? withNumber(t("agentsChip.running"), running, "agents-chip-activity-number")
-            : withNumber(t("agentsChip.waiting"), waiting, "agents-chip-activity-number")}
-        </span>
-      ) : null}
       {/* below 600: the count alone (the full label stays the name and the tooltip) */}
       <span className="cb-agents-chip-count" data-part="agents-chip-count" aria-hidden="true">
         {count}

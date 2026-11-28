@@ -6,7 +6,7 @@ import { ComponentCard, useOwnerFilter } from "../../../../../components/AdminCo
 import { adminItemTabs } from "../../../../../components/admin-item-tabs";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { adminComponentsQuery } from "../../../../../lib/query/components";
 import { usePageQuery } from "../../../../../lib/query/page-query";
 import { useAdmin } from "../../../../../lib/query/workspace";
@@ -27,12 +27,13 @@ export default function AdminAgentTemplatesView() {
 
 function AdminAgentTemplates({ orgId }: { orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents");
   const ti = useTranslations("adminItems.tabs");
   const list = usePageQuery(adminComponentsQuery("agent_template"));
   const owner = useOwnerFilter(list.kind === "ready" ? list.data.components : null);
   const header = {
-    path: [...scope, { label: "agents", href: "/admin/agents" }, { label: "templates" }],
+    path: [...scope, pw("agents", "/admin/agents"), pw("templates")],
     title: t("titles.agent_template"),
     description: t("descriptions.agent_template"),
     ...adminItemTabs("agents", "templates", { items: ti("agents"), templates: ti("templates") }),

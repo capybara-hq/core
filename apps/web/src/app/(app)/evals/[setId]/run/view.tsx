@@ -24,7 +24,7 @@ import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { ModelParams } from "../../../../../components/ModelParams";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { grouped, useFormatCost } from "../../../../../components/TrajectoryParts";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import {
@@ -119,6 +119,7 @@ function FirstStepLoading() {
 
 function RunWizardData({ orgId, setId }: { orgId: string; setId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("evals");
   const tc = useTranslations("common");
   const router = useRouter();
@@ -147,9 +148,9 @@ function RunWizardData({ orgId, setId }: { orgId: string; setId: string }) {
         header={{
           path: [
             ...scope,
-            { label: "evals", href: "/evals" },
+            pw("evals", "/evals"),
             { label: setId, href: `/evals/${encodeURIComponent(setId)}` },
-            { label: "run" },
+            pw("run"),
           ],
           title: t("wizard.title"),
         }}
@@ -216,6 +217,7 @@ function RunWizard({
   purposes: PurposeView[] | null | undefined;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("evals");
   const tc = useTranslations("common");
   const locale = useLocale();
@@ -538,12 +540,7 @@ function RunWizard({
   return (
     <WizardPage
       header={{
-        path: [
-          ...scope,
-          { label: "evals", href: "/evals" },
-          { label: set.name, href: setHref },
-          { label: "run" },
-        ],
+        path: [...scope, pw("evals", "/evals"), { label: set.name, href: setHref }, pw("run")],
         title: t("wizard.title"),
       }}
       steps={STEPS.map((s) => t(`wizard.steps.${s}`))}

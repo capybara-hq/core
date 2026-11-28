@@ -351,7 +351,7 @@ describe("/admin/connectors/[id]", () => {
     expect(screen.queryByRole("button", { name: C.actions.enable })).toBeNull();
     expect(screen.getByRole("button", { name: C.actions.delete })).toBeTruthy();
     // the path links back to the list
-    expect(screen.getByRole("link", { name: "connectors" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: en.path.admin.connectors }).getAttribute("href")).toBe(
       "/admin/connectors",
     );
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);

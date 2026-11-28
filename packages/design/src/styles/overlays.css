@@ -315,6 +315,17 @@
   translate: -50% 0;
   pointer-events: auto;
 }
+/* Inside a native shell from 600 up the region starts space.4 below the window's top row, never
+   over it: the band (`--cb-shell-band`) or, where window controls make a top row
+   (`--cb-shell-row`: the start band of the rail's form, the end band of caption buttons, the full
+   sidebar's brand row), that row's bottom edge, whichever is lower (desktop client spec §7.3). The
+   region lives outside the shell, so it reads the root's properties alone; both are 0 without
+   controls or a band, and the region sits where it does in a browser. */
+@media (min-width: 600px) {
+  :root[data-shell] .cb-toast-region {
+    top: calc(max(var(--cb-shell-band), var(--cb-shell-row)) + var(--cb-space-4));
+  }
+}
 /* On compact (interaction spec §7, D2 as amended by the maintainer decision of 2026-11-23) the
    region sits at the top, docked under the top row: below the shell's band (the safe-area top
    inset, or a mobile shell's controls) and the row itself, the floating row (space.2 + touch.float

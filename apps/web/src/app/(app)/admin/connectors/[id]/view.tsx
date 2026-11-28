@@ -21,7 +21,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import type { AdminConnectorDetail } from "../../../../../lib/admin-items";
 import { adminConnectorQuery } from "../../../../../lib/query/admin-items";
@@ -52,6 +52,7 @@ export default function AdminConnectorView({ id }: { id: string }) {
 
 function AdminConnectorRead({ id }: { id: string }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const read = usePageQuery(adminConnectorQuery(id));
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -59,7 +60,7 @@ function AdminConnectorRead({ id }: { id: string }) {
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "connectors", href: "/admin/connectors" }, { label: id }],
+          path: [...scope, pw("connectors", "/admin/connectors"), { label: id }],
           title: "",
           loading: { actions: 2 },
         }}
@@ -72,6 +73,7 @@ function AdminConnectorRead({ id }: { id: string }) {
 
 function AdminConnector({ connector }: { connector: AdminConnectorDetail }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminItems.connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -89,11 +91,7 @@ function AdminConnector({ connector }: { connector: AdminConnectorDetail }) {
     <>
       <DetailPage
         header={{
-          path: [
-            ...scope,
-            { label: "connectors", href: "/admin/connectors" },
-            { label: connector.name },
-          ],
+          path: [...scope, pw("connectors", "/admin/connectors"), { label: connector.name }],
           title: connector.name,
           actions: [
             {

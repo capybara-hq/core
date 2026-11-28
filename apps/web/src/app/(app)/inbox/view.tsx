@@ -44,7 +44,7 @@ import {
   SkillChangeReview,
   useDecideSkillChange,
 } from "../../../components/SkillChangeReview";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { Link, useRouter } from "../../../i18n/navigation";
 import type { Approval, ApprovalScope } from "../../../lib/approvals";
 import {
@@ -120,6 +120,7 @@ function Inbox({
   inbox: { items: InboxItem[]; truncated?: boolean } | null;
 }) {
   const here = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("inbox");
   const locale = useLocale();
   const toast = useToast();
@@ -506,7 +507,7 @@ function Inbox({
   if (inbox === null) {
     return (
       <InboxPage
-        header={{ path: [...here, { label: "inbox" }], title: t("title") }}
+        header={{ path: [...here, pw("inbox")], title: t("title") }}
         // The loaded inbox opens its first item: its facts and the decision row
         factsLabel={t("inspectorTitle")}
         actionRow={{
@@ -558,7 +559,7 @@ function Inbox({
       )}
       <InboxPage
         header={{
-          path: [...here, { label: "inbox" }],
+          path: [...here, pw("inbox")],
           title: t("title"),
           count: `${rows.length}${truncated ? "+" : ""}`,
         }}

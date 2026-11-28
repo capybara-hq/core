@@ -7,7 +7,7 @@ import { connectionAnchor, usePersonalConnections } from "../../../../components
 import { useMemberGuides } from "../../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import type { ApiClientError } from "../../../../lib/api";
 import { canManageConnectors, personalConnectors } from "../../../../lib/connectors";
 import { retryOnMountOf } from "../../../../lib/query/client";
@@ -37,6 +37,7 @@ export default function ConnectionsView() {
 
 function Connections({ orgId, admin }: { orgId: string; admin: boolean }) {
   const scope = usePagePath("home");
+  const pw = usePathWord("home");
   const t = useTranslations("connections");
   const tc = useTranslations("connectors");
   const nav = useAccountNav();
@@ -65,7 +66,7 @@ function Connections({ orgId, admin }: { orgId: string; admin: boolean }) {
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const header = {
-    path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "connections" }],
+    path: [...scope, pw("account", ACCOUNT_HOME), pw("connections")],
     title: t("nav.connections"),
   };
   // Until the list and every personal connector's detail answered: skeleton cards, one per

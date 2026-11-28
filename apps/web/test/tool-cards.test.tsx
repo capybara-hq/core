@@ -56,6 +56,18 @@ const INFO: ToolInfo = {
   source: { kind: "connector", id: "app1", name: "Fixture" },
 };
 
+/**
+ * The named button once it is enabled. A pending approval card draws its buttons disabled until
+ * the approval is read, and a click on a disabled button does nothing: under load the read can
+ * land after user-event clicks, so a case waits for the read, not only for the button (#988).
+ */
+const findEnabledButton = (name: string | RegExp, root: HTMLElement = document.body) =>
+  vi.waitFor(() => {
+    const button = within(root).getByRole("button", { name }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    return button;
+  });
+
 beforeEach(() => resetNavigation("/chat/c1"));
 afterEach(() => {
   cleanup();
@@ -79,7 +91,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     const { container } = renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, {
       locale: "zh",
     });
-    await screen.findByRole("button", { name: "本会话内都批准" });
+    await findEnabledButton("本会话内都批准");
     expect(screen.getByText("Fixture [delete_item]")).toBeTruthy();
     expect(screen.getByText("mcp__fixture__delete_item")).toBeTruthy();
     const keys = [...container.querySelectorAll('[data-part="kv-key"]')].map((k) => k.textContent);
@@ -102,7 +114,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     const { container } = renderPage(<ApprovalCard orgId="o1" item={platformItem} />, {
       locale: "zh",
     });
-    await screen.findByRole("button", { name: "批准" });
+    await findEnabledButton("批准");
     expect(screen.getByText("Platform [marketplaces.add]")).toBeTruthy();
     expect(screen.getByText("添加市场源 https://x")).toBeTruthy();
     expect(container.querySelector('[data-part="summary"]')).toBeTruthy();
@@ -185,7 +197,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
         }),
     });
     renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, { locale: "zh" });
-    await userEvent.setup().click(await screen.findByRole("button", { name: label }));
+    await userEvent.setup().click(await findEnabledButton(label));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "approve", scope });
     // the viewer is a person too: the localized "You" beside their avatar, the initial from their own name
     const line = await vi.waitFor(() => {
@@ -210,7 +222,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     client.setQueryData(["org", "o1", "inbox"], { items: [] });
     client.setQueryData(["org", "o1", "inboxCount"], { count: 1 });
     renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, { locale: "en", client });
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Approve" }));
+    await userEvent.setup().click(await findEnabledButton("Approve"));
     await vi.waitFor(() =>
       expect(client.getQueryState(["org", "o1", "inbox"])?.isInvalidated).toBe(true),
     );
@@ -230,7 +242,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
         json(200, { approval: { ...APPROVAL, status: "denied", decidedBy: "a1" } }),
     });
     renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, { locale: "en" });
-    await screen.findByRole("button", { name: "Approve" });
+    await findEnabledButton("Approve");
     expect(screen.queryByRole("button", { name: /for this conversation/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Always/ })).toBeNull();
     const user = userEvent.setup();
@@ -441,7 +453,7 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     const { container } = renderPage(<ApprovalCard orgId="o1" item={netItem()} />, {
       locale: "zh",
     });
-    const once = await screen.findByRole("button", { name: "这次允许" });
+    const once = await findEnabledButton("这次允许");
     expect(once.getAttribute("data-variant")).toBe("primary");
     // the ask offers only "once" here: no "add to this device's list" button
     expect(screen.queryByRole("button", { name: /加入此设备的列表/ })).toBeNull();
@@ -482,7 +494,7 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     const { container } = renderPage(<ApprovalCard orgId="o1" item={netItem()} />, {
       locale: "en",
     });
-    const add = await screen.findByRole("button", { name: "Add to this device's list" });
+    const add = await findEnabledButton("Add to this device's list");
     expect(screen.queryByRole("button", { name: "Allow this time" })).toBeNull();
     expect(container.querySelector('[data-part="network-on-machine"]')).toBeNull();
     const user = userEvent.setup();
@@ -534,7 +546,7 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
         />,
         { locale },
       );
-      expect(await screen.findByRole("button", { name: add })).toBeTruthy();
+      expect(await findEnabledButton(add)).toBeTruthy();
       expect(screen.getByText(title)).toBeTruthy();
       expect(screen.getByText(note)).toBeTruthy();
       // no command block, and "once" is never offered
@@ -568,9 +580,9 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
           }),
       });
       renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale });
-      const add = await screen.findByRole("button", {
-        name: locale === "zh" ? /加入此设备的列表/ : "Add to this device's list",
-      });
+      const add = await findEnabledButton(
+        locale === "zh" ? /加入此设备的列表/ : "Add to this device's list",
+      );
       await userEvent.setup().click(add);
       expect(await screen.findByText(m.errors.device.network_not_allowed.follows_org)).toBeTruthy();
       expect(screen.queryByText(m.errors.device.network_not_allowed.default)).toBeNull();
@@ -623,7 +635,7 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
         }),
     });
     renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale: "zh" });
-    await screen.findByRole("button", { name: "这次允许" });
+    await findEnabledButton("这次允许");
     expect(screen.queryByText(/设备没有确认这次网络规则的修改/)).toBeNull();
   });
 
@@ -983,7 +995,7 @@ describe("the approval block lists every scope only when allowed", () => {
       { locale: "en" },
     );
     const group = await screen.findByRole("group", { name: "Approval needed" });
-    await within(group).findByRole("button", { name: "Approve" });
+    await findEnabledButton("Approve", group);
     expect(within(group).getAllByRole("button").length).toBeGreaterThanOrEqual(4);
   });
 });

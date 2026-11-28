@@ -2975,7 +2975,7 @@ textarea {
   padding: 0 var(--cb-space-2);
 }
 /* The agents chip (§6.16.29): a picker whose status dot leads the label, space.2 before it;
- * on compact (below 600) the dot (or the agent icon) and the count alone. */
+ * on compact (below 600) the dot and the count alone. */
 .r-agents-chip {
   gap: var(--cb-space-2);
   flex: none;
@@ -2983,21 +2983,13 @@ textarea {
 .r-agents-chip-count {
   display: none;
 }
-.r-agents-chip-icon {
-  display: inline-flex;
-  align-items: center;
-}
 .r-agents-chip-number {
   color: var(--cb-ink);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
-.r-agents-chip-activity {
-  white-space: nowrap;
-}
 @media (max-width: 639px) {
-  .r-agents-chip-label,
-  .r-agents-chip-activity {
+  .r-agents-chip-label {
     display: none;
   }
   .r-agents-chip-count {
@@ -5216,8 +5208,14 @@ textarea {
 .r-amap-dot[data-status="limit"] {
   background: var(--cb-warn);
 }
+/* One colour rule for every agent dot (maintainer decision 2026-11-28): finished is faint,
+ * filled when completed and a 1.5px faint ring when stopped. */
 .r-amap-dot[data-status="completed"] {
-  background: var(--cb-ok);
+  background: var(--cb-faint);
+}
+.r-amap-dot[data-status="aborted"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--cb-faint);
 }
 .r-amap-dot[data-status="failed"] {
   background: var(--cb-fail);

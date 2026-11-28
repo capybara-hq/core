@@ -27,7 +27,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
 import {
@@ -72,6 +72,7 @@ export default function EvalSetView({ setId }: { setId: string }) {
 
 function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("evals");
   const tSet = useTranslations("evals.set");
   const router = useRouter();
@@ -104,7 +105,7 @@ function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "evals", href: "/evals" }],
+          path: [...scope, pw("evals", "/evals")],
           title: "",
           // the loaded head's three actions: sample, run, more
           loading: { title: true, actions: 3 },
@@ -135,7 +136,7 @@ function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
     <>
       <DetailPage
         header={{
-          path: [...scope, { label: "evals", href: "/evals" }, { label: set.name }],
+          path: [...scope, pw("evals", "/evals"), { label: set.name }],
           title: set.name,
           count: t("set.count", { n: set.caseCount }),
           actions: [

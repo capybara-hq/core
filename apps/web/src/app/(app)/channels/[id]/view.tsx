@@ -34,7 +34,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { SetupGuideSection } from "../../../../components/SetupGuideSection";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
 import { configIssues, issueLines } from "../../../../lib/api";
@@ -96,6 +96,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
 
 function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("channels");
   const lang = labelLocale(useLocale());
   const qc = useQueryClient();
@@ -131,7 +132,7 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "channels", href: "/channels" }],
+          path: [...scope, pw("channels", "/channels")],
           title: "",
           // the plugin's mark keeps its place
           loading: { title: true, avatar: true },
@@ -150,7 +151,7 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
   return (
     <DetailPage
       header={{
-        path: [...scope, { label: "channels", href: "/channels" }, { label: data.channel.name }],
+        path: [...scope, pw("channels", "/channels"), { label: data.channel.name }],
         title: data.channel.name,
         // the plugin's icon (the name's initial without one) and the platform's display name
         avatar: (

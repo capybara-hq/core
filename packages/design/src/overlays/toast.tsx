@@ -16,11 +16,19 @@ import { useClassForm } from "../shell/class-forms";
 type ToastAction = { label: string; run(): void } | undefined;
 
 type ToastItem =
-  /** `ms`: how long it stays once shown (its timer starts only then). */
-  | { id: number; kind: "success"; msg: string; action?: ToastAction; ms: number }
+  /**
+   * `ms`: how long it stays once shown (its timer starts only then); `round` counts the repeats
+   * folded into it, each starting its timer over.
+   */
+  | { id: number; kind: "success"; msg: string; action?: ToastAction; ms: number; round: number }
   | { id: number; kind: "error"; msg: string; action?: ToastAction }
   | { id: number; kind: "progress"; msg: string; done: number; total: number };
 
+/**
+ * A success or an error whose message (and action label) equals one already there folds into it
+ * instead of stacking a second one: a success (without an Undo) starts its timer over, an error
+ * takes the newest action.
+ */
 export type ToastApi = {
   /** A result; with an action (Undo of a Repeater's remove) it stays {@link UNDO_MS}, else 4 s. */
   success(msg: string, opts?: { actionLabel: string; onAction(): void }): void;
@@ -57,14 +65,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const t = useDesignT();
   const [items, setItems] = useState<ToastItem[]>([]);
   const nextId = useRef(1);
-  // one auto-dismiss timer per shown success toast, keyed by its id
-  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  // one auto-dismiss timer per shown success toast, keyed by its id, with the round it times
+  const timers = useRef(new Map<number, { h: ReturnType<typeof setTimeout>; round: number }>());
   const form = useClassForm();
 
   useEffect(() => {
     const map = timers.current;
     return () => {
-      for (const h of map.values()) clearTimeout(h);
+      for (const { h } of map.values()) clearTimeout(h);
       map.clear();
     };
   }, []);
@@ -83,8 +91,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // into the queue (an error arrived) drops its timer and gets its full duration when shown again.
   useEffect(() => {
     const map = timers.current;
-    for (const [id, h] of map) {
-      if (!items.some((x) => x.id === id) || !visible(id)) {
+    // A repeat folded into a toast (a new round) starts its timer over.
+    for (const [id, { h, round }] of map) {
+      const it = items.find((x) => x.id === id);
+      if (it === undefined || !visible(id) || (it.kind === "success" && it.round !== round)) {
         clearTimeout(h);
         map.delete(id);
       }
@@ -95,7 +105,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         map.delete(it.id);
         close(it.id);
       }, it.ms);
-      map.set(it.id, h);
+      map.set(it.id, { h, round: it.round });
     }
   }, [items, visible, close]);
 
@@ -103,28 +113,41 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     () => ({
       success(msg, opts) {
         const id = nextId.current++;
-        setItems((l) => [
-          ...l,
-          {
-            id,
-            kind: "success",
-            msg,
-            action: opts ? { label: opts.actionLabel, run: opts.onAction } : undefined,
-            ms: opts ? UNDO_MS : SUCCESS_MS,
-          },
-        ]);
+        setItems((l) => {
+          // the same result again while it is there: its timer starts over, no second toast
+          // (never one with an Undo: each undoes something else)
+          const same = opts
+            ? undefined
+            : l.find((x) => x.kind === "success" && x.msg === msg && x.action === undefined);
+          if (same !== undefined)
+            return l.map((x) =>
+              x === same && x.kind === "success" ? { ...x, round: x.round + 1 } : x,
+            );
+          return [
+            ...l,
+            {
+              id,
+              kind: "success",
+              msg,
+              action: opts ? { label: opts.actionLabel, run: opts.onAction } : undefined,
+              ms: opts ? UNDO_MS : SUCCESS_MS,
+              round: 0,
+            },
+          ];
+        });
       },
       error(msg, opts) {
         const id = nextId.current++;
-        setItems((l) => [
-          ...l,
-          {
-            id,
-            kind: "error",
-            msg,
-            action: opts ? { label: opts.actionLabel, run: opts.onAction } : undefined,
-          },
-        ]);
+        const action = opts ? { label: opts.actionLabel, run: opts.onAction } : undefined;
+        setItems((l) => {
+          // the same error again while it is there: one toast, with the newest action
+          const same = l.find(
+            (x) => x.kind === "error" && x.msg === msg && x.action?.label === action?.label,
+          );
+          if (same !== undefined)
+            return l.map((x) => (x === same && x.kind === "error" ? { ...x, action } : x));
+          return [...l, { id, kind: "error", msg, action }];
+        });
       },
       progress(msg, p) {
         const id = nextId.current++;

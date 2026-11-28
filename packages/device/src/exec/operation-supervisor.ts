@@ -101,17 +101,18 @@ const RETAINED_READ_BYTES = 64 * 1024 * 1024;
 const PRUNE_AFTER_RETENTION_MS = 60 * 60 * 1000;
 /**
  * Whether the journal may drop `entry` at `at`: settled for good (completed, or unknown with no
- * launch identity, so no lost process can still run it), never revoked, no cancellation owed, no
- * output left to clean, and {@link PRUNE_AFTER_RETENTION_MS} past its retention. Its id stays
- * spent: a duplicate delivery of its request carries the same admission deadline, long past, so
- * it is refused as expired rather than run again. Without this the journal grows by one entry per
- * operation forever, every commit rewrites all of them, and admission stops at its capacity.
+ * launch identity, so no lost process can still run it), no cancellation owed (a revoked entry
+ * that never launched owes none: nothing of it can run), no output left to clean, and
+ * {@link PRUNE_AFTER_RETENTION_MS} past its retention. Its id stays spent, revoked or not: a
+ * duplicate delivery of its request carries an admission deadline no later than the first one
+ * (the deployment never extends an operation's deadline), long past, so it is refused as expired
+ * rather than run again. Without this the journal grows by one entry per operation forever, every
+ * commit rewrites all of them, and admission stops at its capacity.
  */
 function prunable(entry: Entry, at: number): boolean {
   return (
     (entry.state === "completed" || (entry.state === "unknown" && entry.identity === undefined)) &&
-    !entry.revoked &&
-    entry.stop?.outcome !== "cancel-pending" &&
+    (entry.stop?.outcome !== "cancel-pending" || (entry.revoked && entry.identity === undefined)) &&
     (entry.output === undefined || entry.output.cleaned === true) &&
     entry.admitBeforeMs <= at &&
     entry.retainUntilMs + PRUNE_AFTER_RETENTION_MS <= at
@@ -600,6 +601,8 @@ export class MacOperationSupervisor {
   private expireRetained(): void {
     let changed = false;
     const at = this.judge();
+    /** The control files of revoked entries pruned here, removed once the pruning commit lands. */
+    const controls: string[] = [];
     for (const [id, entry] of this.entries)
       if (
         prunable(entry, at) &&
@@ -609,6 +612,7 @@ export class MacOperationSupervisor {
         !this.outputReads.has(id) &&
         !this.controlWrites.has(id)
       ) {
+        if (entry.revoked) controls.push(this.controlFile(entry));
         this.entries.delete(id);
         changed = true;
       }
@@ -638,7 +642,13 @@ export class MacOperationSupervisor {
         changed = true;
       }
     }
-    if (changed) this.persist();
+    if (!changed) return;
+    this.persist();
+    // after the commit: a crash before it keeps the entry, and its control file with it
+    for (const file of controls)
+      try {
+        rmSync(file, { force: true });
+      } catch {}
   }
   private validate(ref: SandboxExecutionRef): Entry | undefined {
     ref = parseSandboxExecutionRef(ref);
