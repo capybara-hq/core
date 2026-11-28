@@ -35,3 +35,14 @@ describe("permissions.deviceAccess", () => {
     expect(check({ services: ["a", "a"] })).not.toEqual([]);
   });
 });
+
+describe("permissions.deviceAccess.loopbackPorts", () => {
+  it("accepts deviceAccess.loopbackPorts and refuses other keys", () => {
+    expect(check({ services: ["browser"], loopbackPorts: true })).toEqual([]);
+    expect(check({ services: ["browser"], loopbackPorts: false })).toEqual([]);
+    expect(check({ services: ["browser"], loopbackPorts: "yes" })).not.toEqual([]);
+    expect(check({ services: ["browser"], ports: [1] }).join("\n")).toContain(
+      "permissions.deviceAccess must be { services: string[], loopbackPorts?: boolean }",
+    );
+  });
+});

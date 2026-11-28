@@ -26,6 +26,7 @@ import { NetworkGrantsModule } from "../sandbox/network-grants.module.js";
 import { OperationAuthorityModule } from "../sandbox/operation-authority.module.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { PermissionCallGrantsModule } from "../sandbox/permission-call-grants.module.js";
+import { PermissionFactsModule } from "../sandbox/permission-facts.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
@@ -67,6 +68,8 @@ import { WatchedWaitsLock } from "./watched-waits-lock.js";
     PermissionCallGrantsModule,
     PermissionAuthorityModule,
     OperationAuthorityModule,
+    // the device's sandbox and provider support a loopback port grant is checked against
+    PermissionFactsModule,
     EventLogModule,
     // the profile that decides an ask addressed to the conversation's person (the profile step)
     ConversationApprovalProfileModule,

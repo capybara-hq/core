@@ -218,6 +218,12 @@ export interface SandboxPermissionSupport {
     readonly openPublic: boolean;
     readonly allowlist: boolean;
     readonly perOperationHosts: boolean;
+    /**
+     * Whether a device service can be granted exact loopback ports
+     * (`DeviceProvider.ensureService` `loopbackPorts`). Needs `outsideSandbox` on an operation
+     * boundary; absent means false (a provider built on an earlier SDK).
+     */
+    readonly loopbackPorts?: boolean;
   };
   readonly outsideSandbox: boolean;
   readonly background: boolean;
@@ -228,13 +234,16 @@ export interface SandboxPermissionSupport {
 /**
  * Who keeps a closed crossing of a {@link SandboxPermissionSupport} closed, when it is not the
  * provider itself: `owner` is the owner of the machine the device runs on (for example a local
- * connection's owner ceiling, set on that machine). Only a closed crossing may name one:
- * `outsideSandbox` with `outsideSandbox: false`, `openPublic` with `network.openPublic: false`.
+ * connection's owner ceiling, set on that machine); `device-update` means the program on that
+ * machine is too old to offer it (an update would). Only a closed crossing may name one:
+ * `outsideSandbox` with `outsideSandbox: false`, `openPublic` with `network.openPublic: false`,
+ * `loopbackPorts` with `network.loopbackPorts` false or absent.
  * Display only: the kernel names that layer in its refusals and never enforces from it.
  */
 export interface SandboxSupportLimitedBy {
   readonly outsideSandbox?: "owner";
   readonly openPublic?: "owner";
+  readonly loopbackPorts?: "device-update";
 }
 
 /**

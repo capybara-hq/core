@@ -1,6 +1,9 @@
 import type { ConversationEvent } from "../../conversations/events.js";
+import type { IdleMode } from "../../db/kernel-schema.js";
 import type { CompactionSettings } from "../../identity/settings.js";
 import { CACHE_EXPIRY_MARGIN_MS, type CacheExpiry } from "./cache-expiry.js";
+
+export type { IdleMode };
 
 /** Idle compaction only beats the expiry of a cache that lives at least this long, in seconds. */
 export const IDLE_MIN_CACHE_TTL = 1800;
@@ -51,6 +54,10 @@ export interface IdleArmFacts {
   outcome: "completed" | "max_steps" | "max_duration" | "budget" | "max_output";
   /** Effective for the org. */
   settings: CompactionSettings;
+  /** How the job would compact: in the armed cache, or on the compaction model. */
+  mode: IdleMode;
+  /** The arm time in epoch ms (a compaction-model job fires `idleDelayMinutes` later). */
+  now: number;
   /** `accounts.idle_compaction = 'off'` of the owner. */
   personalOff: boolean;
   /** `deriveCacheExpiry` over the run's calls (S6). */
@@ -86,7 +93,8 @@ const ARMING_TRIGGERS: ReadonlySet<RunStartedTrigger | undefined> = new Set([
 export function idleArmDecision(
   f: IdleArmFacts,
 ):
-  | { arm: true; runAt: number; expiresAt: number; cacheCallSeq: number }
+  | { arm: true; mode: "cache"; runAt: number; expiresAt: number; cacheCallSeq: number }
+  | { arm: true; mode: "compaction_model"; runAt: number }
   | { arm: false; reason: IdleArmSkip } {
   if (f.conversationKind !== "chat") return { arm: false, reason: "kind" };
   if (!ARMING_TRIGGERS.has(f.trigger)) return { arm: false, reason: "trigger" };
@@ -94,16 +102,31 @@ export function idleArmDecision(
   if (f.outcome === "budget") return { arm: false, reason: "outcome" };
   if (!(f.settings.enabled && f.settings.idleEnabled)) return { arm: false, reason: "disabled" };
   if (f.personalOff) return { arm: false, reason: "personal_off" };
-  if (f.expiry === null || f.lastCall === null) return { arm: false, reason: "no_cache" };
-  if (f.expiry.ttl < IDLE_MIN_CACHE_TTL) return { arm: false, reason: "short_ttl" };
+  const cache = f.mode === "cache";
+  if (cache && (f.expiry === null || f.lastCall === null)) {
+    return { arm: false, reason: "no_cache" };
+  }
+  if (cache && f.expiry !== null && f.expiry.ttl < IDLE_MIN_CACHE_TTL) {
+    return { arm: false, reason: "short_ttl" };
+  }
   const c = f.lastCall;
+  if (c === null) return { arm: false, reason: "small" };
   if (c.input + c.cacheRead + c.cacheWrite + c.output < idleMinTokens(c.window, f.settings)) {
     return { arm: false, reason: "small" };
+  }
+  if (!cache) {
+    return {
+      arm: true,
+      mode: "compaction_model",
+      runAt: f.now + f.settings.idleDelayMinutes * 60_000,
+    };
   }
   if (!f.inContextAllowed) return { arm: false, reason: "quality_gate" };
   if (f.fitPlan) return { arm: false, reason: "fit_plan" };
   if (!f.settled) return { arm: false, reason: "unsettled" };
+  if (f.expiry === null) return { arm: false, reason: "no_cache" };
   return {
+    mode: "cache",
     arm: true,
     runAt: f.expiry.fireAt,
     expiresAt: f.expiry.expiresAt,
@@ -135,8 +158,12 @@ export interface IdleFireFacts {
   expiresAt: number;
   /** The latest compaction record after the latest summary is `compaction_failed`. */
   backoff: boolean;
-  /** The effective definition's model resolves, is enabled and equals the armed call's. */
-  sameModel: boolean;
+  mode: IdleMode;
+  /**
+   * cache: the effective model resolves and equals the armed call's; compaction_model: it resolves
+   * and the compaction model is the summarizer for it.
+   */
+  modelReady: boolean;
   probe: { estimate: number; window: number; growth: number; planned: boolean } | null;
   /** The probe's in-context build applied (no skip). */
   inContext: boolean;
@@ -151,9 +178,10 @@ export function idleFireDecision(
   if (f.stale) return { fire: false, outcome: "obsolete" };
   if (f.busy) return { fire: false, outcome: "busy" };
   if (!f.enabled) return { fire: false, outcome: "disabled" };
-  if (f.now >= f.expiresAt - CACHE_EXPIRY_MARGIN_MS) return { fire: false, outcome: "expired" };
+  if (f.mode === "cache" && f.now >= f.expiresAt - CACHE_EXPIRY_MARGIN_MS)
+    return { fire: false, outcome: "expired" };
   if (f.backoff) return { fire: false, outcome: "backoff" };
-  if (!f.sameModel) return { fire: false, outcome: "no_model" };
+  if (!f.modelReady) return { fire: false, outcome: "no_model" };
   const p = f.probe;
   if (
     p === null ||
@@ -163,6 +191,6 @@ export function idleFireDecision(
   ) {
     return { fire: false, outcome: "small" };
   }
-  if (!f.inContext) return { fire: false, outcome: "no_prefix" };
+  if (f.mode === "cache" && !f.inContext) return { fire: false, outcome: "no_prefix" };
   return { fire: true };
 }

@@ -384,12 +384,27 @@ export class ChannelSupervisor {
         .catch((err: unknown) => this.log.warn("cannot publish channel handoff", { err }));
   }
 
-  /** A renewal succeeded: one lease period connected in a row clears the failure count. */
+  /**
+   * A renewal succeeded: one lease period connected in a row clears the failure count and the
+   * connection's `last_error`, so a failure the connection has recovered from does not stay on its
+   * page next to "running".
+   */
   private async afterRenew(id: string, h: Held, ttl: number): Promise<void> {
     h.renewedAt = Date.now();
     if (!h.stable && Date.now() - h.startedAt >= ttl) {
       h.stable = true;
       await this.redis.del(channelFailsKey(id)).catch(() => {});
+      try {
+        // org-filter: id is a connection this gateway supervisor holds the lease of, not caller input
+        await this.db
+          .updateTable("channel_connections")
+          .set({ last_error: null })
+          .where("id", "=", id)
+          .where("last_error", "is not", null)
+          .execute();
+      } catch (e) {
+        this.log.warn("cannot clear channel error", { connectionId: id, err: e });
+      }
     }
   }
 

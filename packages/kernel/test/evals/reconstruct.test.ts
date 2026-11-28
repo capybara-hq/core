@@ -29,8 +29,6 @@ import { createKv } from "../../src/ctx/kv.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DeviceProjectFilesService } from "../../src/devices/device-project-files.service.js";
-import { DevicesService } from "../../src/devices/devices.service.js";
-import { DialInMachines } from "../../src/dial-in/machines.js";
 import { ApiError } from "../../src/errors.js";
 import {
   reconstructRequest,
@@ -48,7 +46,6 @@ import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { ConversationMedia } from "../../src/files/conversation-media.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
@@ -212,6 +209,11 @@ beforeAll(async () => {
               { id: "fake-1" },
               { id: "fake-v", vision: true, documents: true },
               { id: "fake-small", contextWindow: 1500 },
+              // compaction model spec §7.3: a roomy conversation model, an eligible compaction
+              // model (200k) and the smallest eligible one (50k: a chunk is about 35k tokens)
+              { id: "fake-big", contextWindow: 400_000 },
+              { id: "fake-c", contextWindow: 200_000 },
+              { id: "fake-cs", contextWindow: 50_000 },
             ],
           },
           "fake-object-store": {
@@ -509,8 +511,9 @@ async function mediaFor(convId: string, snap: CaseSnapshot, seq: number, info: M
 }
 
 /**
- * 核对：快照里每次 model_call（包括较早运行的、失败的尝试）还原出的请求与供应商实际收到的逐项相等、
- * 基线没有漂移；返回还原结果的漂移（供调用方另行断言）。
+ * Checks that every model_call in the snapshot (earlier runs and failed attempts included) rebuilds
+ * a request equal to what the provider received (the rendered parts byte for byte, key order
+ * included) and that the baseline has no drift.
  */
 async function expectZeroDrift(convId: string, snap: CaseSnapshot, upTo = sent.length) {
   const calls = modelCalls(toEvents(snap));
@@ -524,6 +527,12 @@ async function expectZeroDrift(convId: string, snap: CaseSnapshot, upTo = sent.l
     });
     expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
     expect(out.request, `model_call seq ${c.seq}`).toEqual(sent[i]);
+    // what a provider renders into the prompt, byte for byte with key order: a reordered tool
+    // schema is a different prompt (a prompt cache miss) even when deep-equal. `params` are read
+    // key by key by providers, so their order is not compared
+    const rendered = (r: ModelRequest | undefined) =>
+      JSON.stringify([r?.system, r?.messages, r?.tools]);
+    expect(rendered(out.request), `model_call seq ${c.seq} bytes`).toBe(rendered(sent[i]));
     const {
       maxOutputTokens: _m,
       droppedParams: _d,
@@ -1182,7 +1191,7 @@ describe("reconstructRequest：基线零漂移", () => {
     }
     const armedSeq = (await eventsOf(db, conv)).findLast((e) => e.type === "run_finished")?.seq;
     const idle = await withOrgScope(orgId, () =>
-      k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number),
+      k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number, "cache"),
     );
     expect(idle).not.toBeNull();
     await waitForTerminal(db, conv, ++n, 30_000);
@@ -1255,7 +1264,7 @@ describe("reconstructRequest：基线零漂移", () => {
       await hold(60_000);
       const armedSeq = (await eventsOf(db, conv)).findLast((e) => e.type === "run_finished")?.seq;
       const idle = await withOrgScope(orgId, () =>
-        k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number),
+        k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number, "cache"),
       );
       expect(idle).not.toBeNull();
       await waitFor(
@@ -1363,6 +1372,202 @@ describe("reconstructRequest：基线零漂移", () => {
       expect(text).not.toContain("The summary covers what came before them");
     }
     await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  describe("compactions written by a compaction model (compaction model spec §7.3)", () => {
+    const FAKE_C = { provider: "model-fake", model: "fake-c" };
+    const summariesOf = (events: ConversationEvent[]) =>
+      events.filter(
+        (e): e is Extract<ConversationEvent, { type: "compaction_summary" }> =>
+          e.type === "compaction_summary",
+      );
+    /** The org's `compaction` purpose mapped to `model` for the case; `unmap` removes it. */
+    async function mapCompaction(model: string): Promise<void> {
+      const res = await owner({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/model-purposes/compaction`,
+        payload: { target: { model: { provider: "model-fake", model }, params: {} } },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    const unmapCompaction = () =>
+      db.deleteFrom("model_purpose_mappings").where("purpose", "=", "compaction").execute();
+    const setCompaction = (value: Record<string, unknown>) =>
+      db
+        .updateTable("deployment_settings")
+        .set({ value: JSON.stringify(value) })
+        .where("key", "=", "compaction")
+        .execute();
+    const BASE = { keepRecentTurns: 1, reserveTokens: 0 };
+    /** The first text of every summary-headed request the provider received. */
+    const summaryHeads = () =>
+      sent.flatMap((r) => {
+        const c = r.messages[0]?.content;
+        const first = Array.isArray(c) ? c[0] : undefined;
+        return first?.type === "text" && first.text.startsWith("<conversation_summary>")
+          ? [first.text]
+          : [];
+      });
+    const IN_CONTEXT_TAIL = "The summary covers what came before them";
+
+    it("a proactive compaction on the compaction model, then a message run: zero drift, transcript framing", async () => {
+      reset();
+      // the trigger fires at half of fake-1's window, as in the in-context case above, but with C
+      // mapped the summary is a transcript one written on fake-c
+      await setCompaction({ ...BASE, threshold: 0.5 });
+      await mapCompaction("fake-c");
+      try {
+        const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+        const conv = await createConv(owner, orgId, agentId);
+        let n = 0;
+        const turn = async (message: string) => {
+          await postMessage(owner, orgId, conv, message);
+          await waitForTerminal(db, conv, ++n, 30_000);
+        };
+        const compacted = async () => summariesOf(await eventsOf(db, conv)).length > 0;
+        for (let i = 0; i < 6 && !(await compacted()); i++) await turn("long:3000");
+        await turn("echo:one more run");
+
+        const events = await eventsOf(db, conv);
+        const summaries = summariesOf(events);
+        expect(summaries.map((e) => [e.payload.method, e.payload.model])).toEqual([
+          ["transcript", FAKE_C],
+        ]);
+        const usage = events.filter(
+          (e) => e.type === "usage" && e.payload.purpose === "compaction",
+        );
+        expect(usage.length).toBeGreaterThan(0);
+        for (const u of usage) expect(u.type === "usage" && u.payload.model).toBe("fake-c");
+        expect(compactions.length).toBeGreaterThan(0);
+        const heads = summaryHeads();
+        expect(heads.length).toBeGreaterThan(0);
+        for (const head of heads) expect(head).not.toContain(IN_CONTEXT_TAIL);
+        await expectZeroDrift(conv, await snapshotOf(conv));
+      } finally {
+        await unmapCompaction();
+        await setCompaction(BASE);
+      }
+    });
+
+    it("a chunked compaction on a 50k-window compaction model, then a message run: zero drift", async () => {
+      reset();
+      await mapCompaction("fake-cs");
+      try {
+        const agentId = await createAgent({ provider: "model-fake", model: "fake-big" });
+        // six seeded messages of 20k tokens: far more transcript than one 50k-window chunk
+        const conv = await createConv(owner, orgId, agentId);
+        const seeded = await withOrgScope(orgId, () =>
+          k.app.get(EventLog).append(
+            conv,
+            Array.from({ length: 6 }, () => ({
+              type: "user_message" as const,
+              payload: {
+                content: [
+                  { type: "text" as const, text: "lorem ipsum dolor sit amet ".repeat(3000) },
+                ],
+                authorAccountId: ownerId,
+              },
+            })),
+          ),
+        );
+        await db
+          .updateTable("conversations")
+          .set({ consumed_seq: String(seeded.at(-1)?.seq) })
+          .where("id", "=", conv)
+          .execute();
+        await postMessage(owner, orgId, conv, "echo:ok");
+        await waitForTerminal(db, conv, 1, 30_000);
+        const res = await owner({
+          method: "POST",
+          url: `/api/v1/orgs/${orgId}/conversations/${conv}/compact`,
+          payload: {},
+        });
+        expect(res.statusCode, res.body).toBe(202);
+        await waitFor(
+          async () => (summariesOf(await eventsOf(db, conv)).length > 0 ? true : null),
+          60_000,
+          "the chunked summary",
+        );
+        await waitForTerminal(db, conv, 2, 30_000);
+        await postMessage(owner, orgId, conv, "echo:after the chunked compaction");
+        await waitForTerminal(db, conv, 3, 30_000);
+
+        const events = await eventsOf(db, conv);
+        const summaries = summariesOf(events);
+        expect(summaries.map((e) => [e.payload.method, e.payload.model])).toEqual([
+          ["transcript", { provider: "model-fake", model: "fake-cs" }],
+        ]);
+        expect(compactions.length).toBeGreaterThanOrEqual(3);
+        await expectZeroDrift(conv, await snapshotOf(conv));
+      } finally {
+        await unmapCompaction();
+      }
+    });
+
+    it("an idle compaction in compaction-model mode, then a message run: zero drift, transcript framing", async () => {
+      reset();
+      await mapCompaction("fake-c");
+      try {
+        const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+        const conv = await createConv(owner, orgId, agentId);
+        let n = 0;
+        for (let i = 0; i < 3; i++) {
+          await postMessage(owner, orgId, conv, `echo:turn ${i} ${"words ".repeat(40)}`);
+          await waitForTerminal(db, conv, ++n, 30_000);
+        }
+        const armedSeq = (await eventsOf(db, conv)).findLast((e) => e.type === "run_finished")?.seq;
+        const idle = await withOrgScope(orgId, () =>
+          k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number, "compaction_model"),
+        );
+        expect(idle).not.toBeNull();
+        await waitForTerminal(db, conv, ++n, 30_000);
+        await postMessage(owner, orgId, conv, "echo:after the idle compaction");
+        await waitForTerminal(db, conv, ++n, 30_000);
+
+        const events = await eventsOf(db, conv);
+        const started = events.find((e) => e.type === "run_started" && e.runId === idle);
+        expect(started?.type === "run_started" && started.payload.compactOrigin).toBe("idle");
+        expect(
+          summariesOf(events).map((e) => [e.runId, e.payload.method, e.payload.model]),
+        ).toEqual([[idle, "transcript", FAKE_C]]);
+        const last = modelCalls(events).at(-1) as ModelCallEvent;
+        expect(last.payload.request.summarySeq).toBe(summariesOf(events)[0]?.seq);
+        const heads = summaryHeads();
+        expect(heads.length).toBeGreaterThan(0);
+        for (const head of heads) expect(head).not.toContain(IN_CONTEXT_TAIL);
+        await expectZeroDrift(conv, await snapshotOf(conv));
+      } finally {
+        await unmapCompaction();
+      }
+    });
+
+    it("C mapped after an in-context summary: the next compaction is a transcript one, the framing follows each logged method, zero drift", async () => {
+      reset();
+      await setCompaction({ ...BASE, threshold: 0.5 });
+      try {
+        const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+        const conv = await createConv(owner, orgId, agentId);
+        let n = 0;
+        const turn = async (message: string) => {
+          await postMessage(owner, orgId, conv, message);
+          await waitForTerminal(db, conv, ++n, 30_000);
+        };
+        const count = async () => summariesOf(await eventsOf(db, conv)).length;
+        for (let i = 0; i < 6 && (await count()) < 1; i++) await turn("long:3000");
+        expect((await count()) > 0).toBe(true);
+        await mapCompaction("fake-c");
+        for (let i = 0; i < 8 && (await count()) < 2; i++) await turn("long:3000");
+        await turn("echo:one more run");
+
+        const summaries = summariesOf(await eventsOf(db, conv));
+        expect(summaries.map((e) => e.payload.method)).toEqual(["in_context", "transcript"]);
+        expect(summaries[1]?.payload.model).toEqual(FAKE_C);
+        await expectZeroDrift(conv, await snapshotOf(conv));
+      } finally {
+        await unmapCompaction();
+        await setCompaction(BASE);
+      }
+    });
   });
 
   it("a summary inside the current turn (context compaction spec §4.2, revision 2026-11-15): the turn's message follows the summary, zero drift", async () => {

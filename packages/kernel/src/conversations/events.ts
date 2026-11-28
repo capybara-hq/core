@@ -536,7 +536,9 @@ export const ReviewRecordSchema = z
      * scope, a host outside the allowlist, running outside the sandbox, or a sensitive command.
      * Not model-visible, so it needs no DriftReason.
      */
-    crossing: z.enum(["directory", "host", "outside-sandbox", "sensitive"]).optional(),
+    crossing: z
+      .enum(["directory", "host", "outside-sandbox", "sensitive", "loopback-port"])
+      .optional(),
   })
   .strict();
 
@@ -993,7 +995,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       binding: PermissionCallBindingSchema,
       permissionScope: PermissionExpansionSchema,
       targetPath: z.string().max(4096).optional(),
-      scopeKind: z.enum(["directories-and-hosts", "sandbox-escalation"]),
+      scopeKind: z.enum(["directories-and-hosts", "sandbox-escalation", "loopback-port"]),
       /** A per-call sandbox escalation: the model's justification (its scope is empty). */
       escalation: PermissionEscalationSchema.optional(),
       candidateHash: z.string(),
@@ -1005,9 +1007,16 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       decisionSource: z.enum(["review-model", "rule", "full-access"]),
       /** The crossing reviewed (approval-only profiles design); not model-visible. */
-      crossing: z.enum(["directory", "host", "outside-sandbox"]).optional(),
+      crossing: z.enum(["directory", "host", "outside-sandbox", "loopback-port"]).optional(),
       /** The sensitive-command consents (rule ids) a Full access auto-grant skipped; not model-visible. */
       sensitive: z.array(z.string()).optional(),
+      /**
+       * A loopback port grant's review (`scopeKind: "loopback-port"`): the device service and the
+       * port it asked to reach on the person's own device. Not model-visible.
+       */
+      loopback: z
+        .object({ service: z.string(), port: z.number().int().min(1).max(65535) })
+        .optional(),
     }),
   ),
   ev(
@@ -1728,6 +1737,18 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       command: CommandAskSchema.optional(),
       /**
+       * A loopback port ask (browser loopback port grants): the device service, the port it asks
+       * to reach on the person's own device and whether it is a well-known database port. Display
+       * only, never model-visible, as `network`.
+       */
+      loopback: z
+        .object({
+          service: z.string(),
+          port: z.number().int().min(1).max(65535),
+          database: z.boolean(),
+        })
+        .optional(),
+      /**
        * A secure input request (`kind = 'secure_input'`; profiles govern every approval): what the
        * values are for and the field paths the person enters. Display only, never a value and
        * never model-visible.
@@ -2189,6 +2210,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       method: z.enum(["transcript", "in_context"]).optional(),
       /**
+       * The configured ref of the model that wrote the summary (compaction model spec §7.1): the
+       * compaction model, or the conversation's on the fallback path. Not model-visible; absent
+       * before it.
+       */
+      model: z.object({ provider: z.string(), model: z.string() }).optional(),
+      /**
        * The step the compaction ran in (0 for a manual compact run), so a later compaction in the
        * same step takes the next idempotency key.
        */
@@ -2200,6 +2227,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({
       attempt: count,
       reason: z.string(),
+      /**
+       * The configured ref of the model whose call failed or was denied (compaction model spec
+       * §7.1); not model-visible; absent when no call was built.
+       */
+      model: z.object({ provider: z.string(), model: z.string() }).optional(),
       /** The step the compaction ran in, as on `compaction_summary`. */
       step: count,
     }),

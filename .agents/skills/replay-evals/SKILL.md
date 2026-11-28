@@ -27,6 +27,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   messages, compaction, images / placeholders, and so on; it reconstructs from logs produced by real runs on the current code and
   requires `drift` to be empty and the reconstructed request to equal the one sent to the model at the time).
   Run from the repo root: `pnpm exec vitest run packages/kernel/test/evals/reconstruct.test.ts`.
+  Besides deep equality it compares what a provider renders (system, messages, tools) byte for byte, key
+  order included: tool definitions are read back from `tool_specs.spec_text` (the JSON as sent), never
+  from the jsonb `spec`, which reorders keys (a reordered schema is a different prompt and misses the
+  prompt cache, as the prompt suggestion's side request did).
 - **Any new model-visible input must go into the log** (written into an event or the `model_call` record); request building must not read PG / config / the clock on the spot.
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order) when it can differ between the recording
   and a reconstruction (a candidate changes it, or it can't be fetched at reconstruction), and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
@@ -196,6 +200,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   conversation was compacted into the summary above and is no longer shown verbatim." (compaction spec
   §4.2.2): a framing text, rendered for every log, no `DriftReason`. `compaction_skipped` (a manual
   compaction with nothing to summarize, spec §4.7) is display only, never model-visible.
+  `compaction_summary.model` / `compaction_failed.model` (the ref of the model that wrote or failed, compaction
+  model spec §7.1) are not model-visible; a compaction-model summary is `method: "transcript"`.
 - **Idle compact runs** (idle compaction spec §5): `run_started.compactOrigin` (`idle`; absent = manual) and
   `run_aborted.reason: "superseded"` (an idle compact run preempted by input, no account) are display and
   run-control fields, never model-visible, so no `DriftReason`. Request building skips them (a compact run's

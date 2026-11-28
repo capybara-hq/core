@@ -35,6 +35,7 @@ import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { RunDeletion } from "../runtime/run-deletion.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { revokeLoopbackGrantsOfConversation } from "../sandbox/loopback-grant-records.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import { revokeSharesIn } from "../shares/revoke.js";
@@ -1238,6 +1239,12 @@ export class ConversationsService {
         deviceId: subject.deviceId,
         conversationId,
       });
+    // a root's loopback port grants end with it and its services are refreshed without them (a
+    // sub-agent's conversation holds none)
+    await revokeLoopbackGrantsOfConversation(this.db.db, this.outbox, {
+      orgId,
+      rootConversationId: conversationId,
+    });
   }
 
   /** 读会话：非所有者、或 agent 已对所有者不可用 → `conversation.not_found`。 */

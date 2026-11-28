@@ -101,7 +101,7 @@ export type NetworkAsk = {
    * service's ask names what asked ("The agent's browser wants to reach …").
    */
   title?: string;
-  /** A body line in place of the default "this command was blocked" line (plain text). */
+  /** A body line in place of the default "this command was blocked" line (plain text); "": none. */
   body?: string;
 };
 
@@ -788,7 +788,7 @@ function HostName({ host }: { host: string }) {
   );
 }
 
-const NETWORK_SCOPES: ApprovalScope[] = ["once", "always"];
+const NETWORK_SCOPES: ApprovalScope[] = ["once", "session", "always"];
 
 const NETWORK_DECIDED = {
   denied: "hitl.network.denied",
@@ -814,7 +814,13 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
     const approved = d === "approved";
     const word =
       d === "approved"
-        ? t(s.scope === "always" ? "hitl.network.allowedDevice" : "hitl.network.allowedOnce")
+        ? t(
+            s.scope === "always"
+              ? "hitl.network.allowedDevice"
+              : s.scope === "session"
+                ? "hitl.network.allowedSession"
+                : "hitl.network.allowedOnce",
+          )
         : t(NETWORK_DECIDED[d]);
     // who decided: an approval, a denial, a skip (the person who wrote); expiry and cancel name no one
     const who = s.decision === "expired" || s.decision === "cancelled" ? "" : whoNode(s.who);
@@ -946,12 +952,14 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
           {p.network.title ?? richCopy(titleTpl, vars)}
         </strong>
       </div>
-      <div data-part="network-body">
-        {p.network.body ??
-          (description
-            ? fillCopy(t("hitl.network.body"), { description })
-            : t("hitl.network.bodyPlain"))}
-      </div>
+      {p.network.body === "" ? null : (
+        <div data-part="network-body">
+          {p.network.body ??
+            (description
+              ? fillCopy(t("hitl.network.body"), { description })
+              : t("hitl.network.bodyPlain"))}
+        </div>
+      )}
       {p.network.command !== "" ? (
         <pre className="cb-hcard-json" data-part="network-command">
           {clipCommand(p.network.command)}

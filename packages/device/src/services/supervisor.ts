@@ -22,10 +22,10 @@ import {
   DEVICE_SERVICE_SOCKET_ENV,
   DEVICE_SERVICE_STATE_ENV,
   DEVICE_SERVICE_WORKSPACE_ENV,
+  type DeviceServiceNetwork,
   type DeviceServiceStatus,
   deviceServiceFilesDigest,
   encodeServiceMessage,
-  type SandboxLimits,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   ServiceMessageDecoder,
@@ -155,7 +155,7 @@ export interface ServiceLaunch {
    * The device's network as the deployment holds it (the provider's limits), intersected by the
    * launcher with the owner's ceiling; absent, the service gets no network (fail closed).
    */
-  network?: SandboxLimits["network"];
+  network?: DeviceServiceNetwork;
 }
 
 /** A running service process. */
@@ -181,7 +181,7 @@ export interface ServiceLauncher {
    * The network a launch with `network` would get now, as a comparable key (after the owner's
    * ceiling): a running service whose key differs is restarted. Absent: {@link networkKey}.
    */
-  networkKey?(network: SandboxLimits["network"] | undefined): Promise<string>;
+  networkKey?(network: DeviceServiceNetwork | undefined): Promise<string>;
   /** The owner ceiling revision a launch would be built under now (absent: never changes). */
   ceilingRevision?(): Promise<string>;
   /**
@@ -223,7 +223,7 @@ interface Running {
   /** The effective network it was started with ({@link ServiceLauncher.networkKey}). */
   network: string;
   /** The device's network as the launch was asked for (before the owner's ceiling). */
-  launchNetwork: SandboxLimits["network"] | undefined;
+  launchNetwork: DeviceServiceNetwork | undefined;
   /** The spec it was launched with, its files left out: a restart runs exactly this again. */
   spec: Omit<LocalServiceSpec, "files">;
   /**
@@ -266,10 +266,20 @@ export interface ServiceSupervisorOptions {
   now?: () => Date;
 }
 
-/** The network a service runs with, comparable: kind and sorted hosts, or none. */
-export function networkKey(n: SandboxLimits["network"] | undefined): string {
+/**
+ * The network a service runs with, comparable: kind and sorted hosts, or none; then
+ * `;loopback:<sorted ports>` when loopback ports are granted, so a changed set restarts it.
+ */
+export function networkKey(n: DeviceServiceNetwork | undefined): string {
   if (!n) return "none";
-  return `${n.kind}:${[...new Set(n.hosts.map((h) => h.toLowerCase()))].sort().join(",")}`;
+  const base = `${n.kind}:${[...new Set(n.hosts.map((h) => h.toLowerCase()))].sort().join(",")}`;
+  return base + loopbackKey(n.loopbackPorts);
+}
+
+/** The loopback part of a network key: empty without ports, else `;loopback:<sorted ports>`. */
+export function loopbackKey(ports: readonly number[] | undefined): string {
+  if (!ports || ports.length === 0) return "";
+  return `;loopback:${[...new Set(ports)].sort((a, b) => a - b).join(",")}`;
 }
 
 /** Rejects with `signal`'s reason when it aborts first; `p` itself goes on. */
@@ -460,7 +470,7 @@ export class ServiceSupervisor {
    */
   ensure(
     spec: LocalServiceSpec,
-    network: SandboxLimits["network"] | undefined,
+    network: DeviceServiceNetwork | undefined,
     signal: AbortSignal,
     opts: { ifRunning?: boolean; filesDigest?: string } = {},
   ): Promise<DeviceServiceStatus> {
@@ -770,7 +780,7 @@ export class ServiceSupervisor {
 
   private async start(
     spec: LocalServiceSpec,
-    network: SandboxLimits["network"] | undefined,
+    network: DeviceServiceNetwork | undefined,
     key: string,
     signal: AbortSignal,
     /**
@@ -887,7 +897,7 @@ export class ServiceSupervisor {
   /** The launch of {@link start}, once every directory was made and the install resolved. */
   private async launchWith(
     spec: LocalServiceSpec,
-    network: SandboxLimits["network"] | undefined,
+    network: DeviceServiceNetwork | undefined,
     key: string,
     signal: AbortSignal,
     o: {
