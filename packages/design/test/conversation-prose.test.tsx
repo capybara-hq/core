@@ -104,7 +104,7 @@ describe("UserBubble (§6.16.6)", () => {
     expect(screen.getByTestId("img")).toBeTruthy();
     expect(container.querySelector('[data-part="bubble"]')).toBeNull();
     cleanup();
-    const withSkill = render(<UserBubble text="" skill="/fix-issue" />);
+    const withSkill = render(<UserBubble skill="/fix-issue" />);
     expect(withSkill.container.querySelector('[data-part="bubble"]')).not.toBeNull();
   });
 
@@ -113,7 +113,7 @@ describe("UserBubble (§6.16.6)", () => {
 
   it("bubble draws tokens inline", () => {
     const segments: ComposerSegment[] = ["send to ", slackToken, " now"];
-    const { container } = wrap(<UserBubble text="" segments={segments} />);
+    const { container } = wrap(<UserBubble segments={segments} />);
     const body = container.querySelector('[data-part="bubble-body"]') as Element;
     const token = body.querySelector('[data-part="inline-token"]') as HTMLElement;
     // inside the body's own flow, between the two text runs, read-only
@@ -126,18 +126,14 @@ describe("UserBubble (§6.16.6)", () => {
   });
 
   it("skill chip precedes argument tokens", () => {
-    const { container } = wrap(
-      <UserBubble text="" skill="/fix-issue" segments={[slackToken, " 123"]} />,
-    );
+    const { container } = wrap(<UserBubble skill="/fix-issue" segments={[slackToken, " 123"]} />);
     const body = container.querySelector('[data-part="bubble-body"]') as Element;
     expect(body.firstElementChild?.getAttribute("data-part")).toBe("bubble-skill");
     expect(body.children[1]?.getAttribute("data-part")).toBe("inline-token");
   });
 
   it("token names read in line order", () => {
-    const { container } = wrap(
-      <UserBubble text="" segments={["a ", slackToken, " b ", fileToken]} />,
-    );
+    const { container } = wrap(<UserBubble segments={["a ", slackToken, " b ", fileToken]} />);
     const names = [...container.querySelectorAll('[data-part="inline-token"]')].map((n) =>
       n.getAttribute("aria-label"),
     );
@@ -295,7 +291,7 @@ describe("UserBubble (§6.16.6)", () => {
   });
 
   it("skill without arguments: only the chip", () => {
-    const { container } = wrap(<UserBubble text="" skill="/release-check" />);
+    const { container } = wrap(<UserBubble skill="/release-check" />);
     expect(container.querySelector('[data-part="bubble"]')?.textContent).toBe("/release-check");
   });
 
