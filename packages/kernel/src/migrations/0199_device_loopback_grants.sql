@@ -23,7 +23,11 @@ CREATE TABLE IF NOT EXISTS device_loopback_grants (
   revoked_at timestamptz,
   revoke_reason text CHECK (
     revoke_reason IN ('revoked', 'expired', 'conversation-deleted', 'outside-sandbox-off')
-  )
+  ),
+  -- An ended grant always says why; a live one carries no reason.
+  CHECK ((revoked_at IS NULL) = (revoke_reason IS NULL)),
+  -- The owner's panel asks without a call; every other source names the call that asked.
+  CHECK ((source = 'owner-panel') = (run_id IS NULL AND call_id IS NULL AND attempt IS NULL))
 );
 
 -- One live grant per (device, service, conversation, port).
@@ -34,6 +38,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS device_loopback_grants_live_uidx
 -- The sweep's scan of live grants past their expiry.
 CREATE INDEX IF NOT EXISTS device_loopback_grants_expiry_idx
   ON device_loopback_grants (expires_at)
+  WHERE revoked_at IS NULL;
+
+-- The by-root revocation (conversation deleted) and refresh scans of live grants.
+CREATE INDEX IF NOT EXISTS device_loopback_grants_root_idx
+  ON device_loopback_grants (conversation_id)
   WHERE revoked_at IS NULL;
 
 -- The rerun's lookup of the grant its call made.
