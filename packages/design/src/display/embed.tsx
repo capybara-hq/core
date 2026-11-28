@@ -1,4 +1,4 @@
-import { type Ref, useCallback, useEffect, useRef } from "react";
+import { type Ref, useCallback, useEffect, useRef, useState } from "react";
 import { useInBox } from "../layout/box";
 
 /** 固定的沙箱：允许脚本与表单，不给同源（嵌入页拿不到外层的 cookie / storage / DOM）。 */
@@ -63,6 +63,10 @@ export function EmbedFrame({
 }: EmbedFrameProps) {
   const inBox = useInBox() !== null;
   const own = useRef<HTMLIFrameElement | null>(null);
+  // Hidden until its first load: before it, the frame shows the browser's initial blank document
+  // and then the embed's own first paint, both light whatever the theme; the host's ground shows
+  // through instead. A new document (a remount takes a new key) starts hidden again.
+  const [loaded, setLoaded] = useState(false);
   const handler = useRef(onMessage);
   useEffect(() => {
     handler.current = onMessage;
@@ -93,6 +97,8 @@ export function EmbedFrame({
       data-part="embed-frame"
       data-framed={(framed ?? (!fill && !inBox)) ? "true" : "false"}
       data-fill={fill ? "true" : undefined}
+      data-loaded={loaded ? "true" : undefined}
+      onLoad={() => setLoaded(true)}
       src={src}
       title={title}
       height={fill ? undefined : Math.max(0, Math.round(height))}
