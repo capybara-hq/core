@@ -196,6 +196,24 @@ async function armedData(conv: string): Promise<CacheJobData> {
 }
 
 /**
+ * Waits until the arming turn's side calls wrote their run-less `usage` events: the completed run
+ * enqueues its title and prompt suggestion jobs after the commit, so both land after `run_finished`
+ * and a case counting the conversation's events must not race them.
+ */
+async function sideCallsSettled(conv: string): Promise<void> {
+  await waitFor(
+    async () => {
+      const purposes = (await eventsOf(db, conv))
+        .filter((e) => e.type === "usage")
+        .map((e) => (e.payload as { purpose?: string }).purpose);
+      return purposes.includes("title") && purposes.includes("suggestion") ? true : null;
+    },
+    30_000,
+    "the arming turn's title and suggestion usage",
+  );
+}
+
+/**
  * A conversation with a long seeded turn and one answered turn, armed: the run's finish owed an
  * `idle-compaction` job; returns its data.
  */
@@ -219,6 +237,7 @@ async function arm(hooks?: Record<string, unknown>): Promise<Armed> {
     .where("id", "=", conv)
     .execute();
   await turn(orgId, conv, "echo:ok", 1);
+  await sideCallsSettled(conv);
   return { orgId, agentId, conv, data: await armedData(conv) };
 }
 
@@ -611,6 +630,7 @@ describe("the idle compaction job on the compaction model", () => {
       .where("id", "=", conv)
       .execute();
     await turn(orgId, conv, "echo:ok", 1);
+    await sideCallsSettled(conv);
     const data = (await armedData(conv)) as unknown as IdleCompactionJobData;
     expect(data.mode).toBe("compaction_model");
     expect(data).not.toHaveProperty("expiresAt");
