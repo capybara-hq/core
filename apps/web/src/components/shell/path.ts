@@ -55,6 +55,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 export const APP_PAGES: readonly string[] = [
   "/",
+  "/account/automations",
   "/account/connections",
   "/account/grants",
   "/account/identities",
